@@ -17,7 +17,7 @@ export function shipmentCard(s: Shipment, onOpen: (s: Shipment) => void): HTMLEl
     {
       type: 'button',
       class: cx(
-        'glass group w-full rounded-2xl p-4 text-left transition duration-200 animate-pop-in',
+        'glass group w-full min-w-0 rounded-2xl p-4 text-left transition duration-200 animate-pop-in',
         'hover:-translate-y-0.5 hover:border-line-strong hover:bg-elevated focus-visible:-translate-y-0.5',
         s.archived && 'opacity-60',
       ),

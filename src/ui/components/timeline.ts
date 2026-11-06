@@ -111,6 +111,7 @@ function timelineItem(e: TrackingEvent, latest: boolean, last: boolean): HTMLEle
         e.location ? h('span', { class: 'inline-flex items-center gap-1' }, icon('pin', 'size-3'), e.location) : null,
         e.origin === 'manual' ? h('span', { class: 'inline-flex items-center gap-1' }, icon('pencil', 'size-3'), 'Manuell') : null,
         e.origin === 'remote' ? h('span', { class: 'inline-flex items-center gap-1' }, icon('refresh', 'size-3'), 'Live') : null,
+        e.origin === 'mail' ? h('span', { class: 'inline-flex items-center gap-1' }, icon('mail', 'size-3'), 'Aus E-Mail') : null,
       ),
     ),
   );

@@ -7,8 +7,18 @@ import tailwindcss from '@tailwindcss/vite';
  * Only applied on `vite build` – the dev server needs inline styles/HMR websockets.
  * If an optional tracking proxy is configured, only its exact origin is allowed for fetch().
  */
-function contentSecurityPolicy(trackingApiUrl?: string): Plugin {
+function contentSecurityPolicy(trackingApiUrl?: string, googleClientId?: string): Plugin {
   let connectSrc = "'self'";
+  let scriptSrc = "'self'";
+  let styleSrc = "'self'";
+  let frameSrc = "'none'";
+  if (googleClientId) {
+    // Gmail integration: Google Identity Services (token popup) + Gmail REST API only
+    scriptSrc += ' https://accounts.google.com/gsi/client';
+    styleSrc += ' https://accounts.google.com/gsi/style';
+    frameSrc = 'https://accounts.google.com/gsi/';
+    connectSrc += ' https://accounts.google.com/gsi/ https://oauth2.googleapis.com/revoke https://gmail.googleapis.com';
+  }
   if (trackingApiUrl) {
     try {
       connectSrc += ` ${new URL(trackingApiUrl).origin}`;
@@ -18,8 +28,9 @@ function contentSecurityPolicy(trackingApiUrl?: string): Plugin {
   }
   const policy = [
     "default-src 'none'",
-    "script-src 'self'",
-    "style-src 'self'",
+    `script-src ${scriptSrc}`,
+    `style-src ${styleSrc}`,
+    `frame-src ${frameSrc}`,
     "img-src 'self' data:",
     "font-src 'self'",
     `connect-src ${connectSrc}`,
@@ -49,7 +60,7 @@ export default defineConfig(({ mode }) => {
   return {
     // Relative base → works on GitHub Pages project sites (/<repo>/) without extra config.
     base: './',
-    plugins: [tailwindcss(), contentSecurityPolicy(env.VITE_TRACKING_API_URL)],
+    plugins: [tailwindcss(), contentSecurityPolicy(env.VITE_TRACKING_API_URL, env.VITE_GOOGLE_CLIENT_ID)],
     build: {
       target: 'es2022',
       sourcemap: false,

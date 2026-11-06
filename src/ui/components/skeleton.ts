@@ -19,7 +19,7 @@ export function shipmentCardSkeleton(): HTMLElement {
 export function listSkeleton(count = 3): HTMLElement {
   return h(
     'div',
-    { class: 'grid gap-3 sm:grid-cols-2', attrs: { role: 'status', 'aria-label': 'Sendungen werden geladen' } },
+    { class: 'grid grid-cols-1 gap-3 sm:grid-cols-2', attrs: { role: 'status', 'aria-label': 'Sendungen werden geladen' } },
     ...Array.from({ length: count }, shipmentCardSkeleton),
   );
 }

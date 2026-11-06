@@ -1,11 +1,14 @@
 import { DecryptionError, InvalidVaultFormatError } from '../core/errors';
 import {
   type CarrierId,
+  type InboxState,
+  type MailSuggestion,
   type Shipment,
   type ShipmentStatus,
   type TrackingEvent,
   type VaultData,
   DEFAULT_SETTINGS,
+  createDefaultInbox,
   createEmptyVault,
 } from '../core/types';
 import {
@@ -272,7 +275,7 @@ function sanitizeEvent(raw: unknown): TrackingEvent | null {
     title,
     description: str(e.description, 1000),
     location: str(e.location, 200),
-    origin: oneOf(e.origin, ['manual', 'remote', 'system'] as const, 'manual'),
+    origin: oneOf(e.origin, ['manual', 'remote', 'system', 'mail'] as const, 'manual'),
   };
 }
 
@@ -303,8 +306,56 @@ function sanitizeShipment(raw: unknown): Shipment | null {
     events: events.slice(0, 500),
     remote,
     archived: s.archived === true,
+    source: s.source === 'gmail' ? 'gmail' : s.source === 'manual' ? 'manual' : undefined,
     createdAt: iso(s.createdAt),
     updatedAt: iso(s.updatedAt),
+  };
+}
+
+const MAX_PROCESSED_IDS = 2000;
+const MAX_DISMISSED = 1000;
+const MAX_SUGGESTIONS = 200;
+
+function sanitizeSuggestion(raw: unknown): MailSuggestion | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const s = raw as Record<string, unknown>;
+  const trackingNumber = str(s.trackingNumber, 120);
+  const messageId = str(s.messageId, 64);
+  if (!trackingNumber || !messageId) return null;
+  const confidence = Number(s.confidence);
+  return {
+    id: str(s.id, 64) ?? crypto.randomUUID(),
+    trackingNumber,
+    carrier: oneOf(s.carrier, CARRIERS, 'other'),
+    confidence: Number.isFinite(confidence) ? Math.min(1, Math.max(0, confidence)) : 0.5,
+    reason: str(s.reason, 200) ?? '',
+    label: str(s.label, 120) ?? trackingNumber,
+    email: str(s.email, 254),
+    sourceUrl: str(s.sourceUrl, 2048),
+    messageId,
+    receivedAt: iso(s.receivedAt),
+  };
+}
+
+const stringList = (v: unknown, maxItems: number, maxLen: number): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0 && x.length <= maxLen).slice(0, maxItems) : [];
+
+export function sanitizeInbox(raw: unknown): InboxState {
+  const base = createDefaultInbox();
+  if (typeof raw !== 'object' || raw === null) return base;
+  const i = raw as Record<string, unknown>;
+  const interval = Number(i.autoScanMinutes);
+  return {
+    provider: 'gmail',
+    enabled: i.enabled === true,
+    account: str(i.account, 254),
+    autoScanMinutes: Number.isFinite(interval) && interval >= 0 && interval <= 1440 ? Math.round(interval) : base.autoScanMinutes,
+    lastScanAt: typeof i.lastScanAt === 'string' && !Number.isNaN(Date.parse(i.lastScanAt)) ? i.lastScanAt : undefined,
+    processedIds: stringList(i.processedIds, MAX_PROCESSED_IDS, 64),
+    dismissed: stringList(i.dismissed, MAX_DISMISSED, 120),
+    suggestions: Array.isArray(i.suggestions)
+      ? i.suggestions.map(sanitizeSuggestion).filter((s): s is MailSuggestion => !!s).slice(0, MAX_SUGGESTIONS)
+      : [],
   };
 }
 
@@ -323,5 +374,6 @@ export function sanitizeVaultData(raw: unknown): VaultData {
       autoLockMinutes:
         Number.isFinite(autoLock) && autoLock >= 0 && autoLock <= 240 ? Math.round(autoLock) : DEFAULT_SETTINGS.autoLockMinutes,
     },
+    inbox: sanitizeInbox(d.inbox),
   };
 }

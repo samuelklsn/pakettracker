@@ -17,6 +17,7 @@ Kein Konto, kein Backend, keine Telemetrie.
 | ✨ Smart Input | Erkennt live E-Mail, URL (inkl. Extraktion der Nummer aus Carrier-Links) und Tracking-IDs von **DHL, UPS, DPD, Hermes** – mit Prüfziffern (UPS 1Z, UPU S10) & Confidence-Ranking bei mehrdeutigen Formaten |
 | 🧭 Tracking-View | Vertikale Timeline (nach Tagen gruppiert) + 4-Stufen-Fortschrittsanzeige, Deeplinks zum offiziellen Carrier-Tracking, manuelle Statuspflege als Fallback |
 | 💎 UX | Dark Mode (Zinc) als Default + Light Mode, Glassmorphism, Skeleton-Loader, Toasts, Empty-States, Tastatur-Shortcuts (`/`, `Strg+K`, `Strg+Shift+L`), Fokus-Trap in Dialogen, `prefers-reduced-motion` |
+| 📬 Gmail-Import | Liest Versand-Mails (nur `gmail.readonly`, direkt im Browser): Eindeutige Treffer werden automatisch eingefügt, unsichere als Vorschläge angezeigt, Folge-Mails („wird heute zugestellt“) ergänzen die Timeline |
 | 💾 Backup | Export/Import der **verschlüsselten** JSON-Datei, Merge oder Replace, Re-Encryption mit dem aktuellen Schlüssel |
 | 🛡 Hardening | Strikte CSP, kein `innerHTML`, Auto-Lock bei Inaktivität, Rollback bei Schreibfehlern, Multi-Tab-Sync |
 
@@ -47,13 +48,16 @@ src/
 │   ├── detection.service.ts # Smart-Input: Regex-Regeln, Prüfziffern, URL-Parsing
 │   ├── carriers.ts          # Carrier-Metadaten & sichere Deeplinks
 │   ├── tracking.service.ts  # API-Layer: Provider-Pattern (Remote-Proxy | Lokal), Timeline
+│   ├── gmail.service.ts     # Gmail: OAuth-Token (GIS, nur RAM), REST, MIME-Parsing
+│   ├── mail-extract.service.ts # Mail → Sendungsnummern (Kontext-Scoring, HTML→Text, Status)
+│   ├── inbox.service.ts     # Scan-Orchestrierung: Dedupe, Auto-Add, Vorschläge
 │   └── autolock.service.ts  # Inaktivitäts-Timer
 ├── ui/                      # Präsentation – kennt Services nur über App-Controller
 │   ├── dom.ts               # XSS-sicherer Hyperscript-Builder (nur textContent)
 │   ├── icons.ts             # Tree-shaken Lucide-Registry
 │   ├── modal.ts / toast.ts / theme.ts / format.ts
 │   └── components/          # lock-screen, smart-input, shipment-card, shipment-detail,
-│                            # timeline, skeleton, empty-state, settings-modal, …
+│                            # timeline, skeleton, empty-state, settings-modal, inbox-panel, …
 ├── app.ts                   # Controller: verbindet Services & Views, State, Routing
 ├── main.ts                  # Bootstrap
 └── styles.css               # Tailwind v4 + semantische Design-Tokens (Dark/Light)
@@ -88,6 +92,40 @@ localStorage["pakettracker.vault.v1"] = { v, kdf:{iterations, salt}, cipher:{iv}
 - **Unverschlüsselt** gespeichert wird nur die Theme-Präferenz (`pakettracker.theme`).
 
 > ⚠️ Zero-Knowledge heißt: Ein vergessenes Master-Passwort kann **nicht** wiederhergestellt werden. Regelmäßig Backups exportieren!
+
+## Gmail-Integration (optional)
+
+Die App kann dein Gmail-Postfach **nur lesend** nach Versand-Mails durchsuchen und gefundene Sendungsnummern übernehmen.
+
+**So funktioniert es:**
+1. **Verbinden:** Per Klick auf „Gmail verbinden“ wird ein Google-Popup geöffnet (OAuth 2.0, Scope `gmail.readonly`).
+2. **Token:** Das Access-Token liegt nur im Arbeitsspeicher (≈ 1 h), wird beim Sperren verworfen und nie gespeichert.
+3. **Suche:** Gesucht wird nur nach Mails von Paketdiensten und großen Shops bzw. mit Versand-Stichworten im Betreff. Beim ersten Scan sind das die letzten 30 Tage, danach nur Neues.
+4. **Bewertung:** Jeder Fund wird nach Kontext bewertet: Carrier-Link, Absender-Domain, Stichworte, Prüfziffern. Bestell-, Kunden- und Telefonnummern werden ignoriert.
+   - **Sicher** (z. B. UPS `1Z…` mit gültiger Prüfziffer, DHL `JJD…`/`00340…`, Carrier-Links): wird automatisch eingefügt.
+   - **Unsicher:** erscheint als Vorschlag zum Übernehmen oder Verwerfen. Verworfene Nummern kommen nie wieder.
+5. **Bekannte Sendungen:** Mails zu bereits vorhandenen Sendungen (z. B. „wird heute zugestellt“) ergänzen deren Timeline.
+6. **Speicherung:** Funde, Vorschläge und der Scan-Verlauf liegen verschlüsselt im Tresor.
+7. **Auto-Scan:** läuft im eingestellten Intervall, solange die App geöffnet ist. Nach dem Entsperren verbindet sich die App automatisch neu. Läuft das Token ab, reicht ein Klick auf „Verbinden & scannen“, da Browser Popups nur nach einem Klick erlauben.
+
+> Das Google-Skript (`accounts.google.com/gsi/client`) wird erst geladen, wenn du die Funktion nutzt. Die CSP erlaubt
+> ausschließlich die nötigen Google-Endpunkte und nur, wenn eine Client-ID konfiguriert ist.
+
+### Einrichtung (einmalig, Google Cloud Console)
+
+1. Projekt anlegen und die **Gmail API** aktivieren (*APIs und Dienste → Bibliothek*).
+2. *Google Auth Platform* einrichten:
+   - **Zielgruppe:** Extern, Status **Testen**. Dein Gmail-Konto unter **Testnutzer** eintragen.
+   - **Datenzugriff:** den Scope `https://www.googleapis.com/auth/gmail.readonly` hinzufügen.
+3. *Clients → Client erstellen* mit Typ **Webanwendung**:
+   - **Autorisierte JavaScript-Quellen:** `https://<user>.github.io` und `http://localhost:5173`
+   - **Weiterleitungs-URIs:** keine
+4. Die **Client-ID** in [`.env`](.env) als `VITE_GOOGLE_CLIENT_ID` eintragen. Sie ist öffentlich und darf committet werden.
+   **Den Clientschlüssel nicht verwenden** und am besten löschen: Er wird nicht gebraucht.
+
+> Gmail API, Testnutzer, Scope und Client müssen im **selben** Google-Cloud-Projekt liegen. Sonst meldet die App
+> „Die Gmail API ist im Google-Cloud-Projekt dieser Client-ID nicht aktiviert“.
+> Im Testmodus zeigt Google beim Login „App nicht überprüft“. Das ist für die private Nutzung normal (*Erweitert → Weiter*).
 
 ## Optionale Live-Tracking-API
 

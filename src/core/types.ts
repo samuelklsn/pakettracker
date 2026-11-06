@@ -20,8 +20,8 @@ export interface TrackingEvent {
   title: string;
   description?: string;
   location?: string;
-  /** `manual` = entered by the user, `remote` = delivered by the tracking API */
-  origin: 'manual' | 'remote' | 'system';
+  /** `manual` = entered by the user, `remote` = tracking API, `mail` = derived from an e-mail */
+  origin: 'manual' | 'remote' | 'system' | 'mail';
 }
 
 export interface Shipment {
@@ -42,8 +42,41 @@ export interface Shipment {
     estimatedDelivery?: string;
   };
   archived: boolean;
+  /** How the shipment was created */
+  source?: 'manual' | 'gmail';
   createdAt: string;
   updatedAt: string;
+}
+
+/** A tracking number found in an e-mail that needs user confirmation. */
+export interface MailSuggestion {
+  id: string;
+  trackingNumber: string;
+  carrier: CarrierId;
+  /** 0..1 */
+  confidence: number;
+  reason: string;
+  label: string;
+  email?: string;
+  sourceUrl?: string;
+  messageId: string;
+  receivedAt: string;
+}
+
+/** Mailbox integration state – stored encrypted inside the vault. */
+export interface InboxState {
+  provider: 'gmail';
+  enabled: boolean;
+  /** Connected account (e-mail address) – used as login hint */
+  account?: string;
+  /** Auto-scan interval while the app is open. 0 = manual only. */
+  autoScanMinutes: number;
+  lastScanAt?: string;
+  /** Gmail message IDs that were already analysed (newest first, capped) */
+  processedIds: string[];
+  /** Tracking numbers the user rejected – never suggested again */
+  dismissed: string[];
+  suggestions: MailSuggestion[];
 }
 
 export interface VaultSettings {
@@ -55,10 +88,15 @@ export interface VaultData {
   schema: 1;
   shipments: Shipment[];
   settings: VaultSettings;
+  inbox: InboxState;
 }
 
 export const DEFAULT_SETTINGS: VaultSettings = { autoLockMinutes: 10 };
 
+export function createDefaultInbox(): InboxState {
+  return { provider: 'gmail', enabled: false, autoScanMinutes: 15, processedIds: [], dismissed: [], suggestions: [] };
+}
+
 export function createEmptyVault(): VaultData {
-  return { schema: 1, shipments: [], settings: { ...DEFAULT_SETTINGS } };
+  return { schema: 1, shipments: [], settings: { ...DEFAULT_SETTINGS }, inbox: createDefaultInbox() };
 }

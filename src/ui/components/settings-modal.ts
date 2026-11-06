@@ -7,8 +7,16 @@ import { confirmDialog, openModal } from '../modal';
 import { notify } from '../toast';
 import { passwordField } from './password-field';
 
+export interface MailSettings {
+  configured: boolean;
+  connect: () => Promise<void>;
+  disconnect: () => Promise<void>;
+  resetHistory: () => Promise<void>;
+}
+
 export interface SettingsContext {
   vault: VaultService;
+  mail: MailSettings;
   onDataChanged: () => void;
   onDestroyed: () => void;
 }
@@ -20,6 +28,7 @@ export function openSettings(ctx: SettingsContext): void {
         'div',
         { class: 'space-y-4' },
         backupSection(ctx),
+        ctx.mail.configured ? mailSection(ctx, close) : null,
         securitySection(ctx),
         dangerSection(ctx, close),
         h(
@@ -181,6 +190,82 @@ function importFlow(ctx: SettingsContext, text: string, fileName: string): void 
         ),
       );
     },
+  );
+}
+
+/* ------------------------------- Mailbox ------------------------------- */
+
+function mailSection(ctx: SettingsContext, closeSettings: () => void): HTMLElement {
+  const inbox = ctx.vault.data.inbox;
+  const interval = h(
+    'select',
+    {
+      id: 'autoscan',
+      class: 'field w-auto min-w-40',
+      disabled: !inbox.enabled,
+      onChange: async () => {
+        const minutes = Number(interval.value);
+        await ctx.vault.update((d) => (d.inbox.autoScanMinutes = minutes));
+        ctx.onDataChanged();
+        notify.success('Auto-Scan aktualisiert', minutes ? `Alle ${minutes} Minuten, solange die App geöffnet ist` : 'Nur manuell scannen');
+      },
+    },
+    ...[5, 15, 30, 60, 0].map((m) => h('option', { value: String(m), selected: inbox.autoScanMinutes === m }, m ? `alle ${m} Minuten` : 'Nur manuell')),
+  );
+
+  const busy = (btn: HTMLButtonElement, fn: () => Promise<void>) => async () => {
+    btn.disabled = true;
+    try {
+      await fn();
+    } catch (err) {
+      notify.error('Aktion fehlgeschlagen', errorMessage(err));
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  const connectBtn = h('button', { class: 'btn-primary', type: 'button' }, icon('mail'), inbox.enabled ? 'Erneut verbinden' : 'Gmail verbinden');
+  connectBtn.addEventListener('click', busy(connectBtn, async () => {
+    await ctx.mail.connect();
+    closeSettings();
+  }));
+  const disconnectBtn = h('button', { class: 'btn-ghost', type: 'button' }, 'Trennen');
+  disconnectBtn.addEventListener('click', busy(disconnectBtn, async () => {
+    await ctx.mail.disconnect();
+    closeSettings();
+  }));
+  const resetBtn = h('button', { class: 'btn-ghost', type: 'button', attrs: { title: 'Die letzten 30 Tage beim nächsten Scan erneut prüfen' } }, icon('refresh'), 'Scan-Verlauf zurücksetzen');
+  resetBtn.addEventListener('click', busy(resetBtn, async () => {
+    await ctx.mail.resetHistory();
+    notify.success('Scan-Verlauf zurückgesetzt', 'Beim nächsten Scan werden die letzten 30 Tage erneut geprüft.');
+  }));
+
+  return section(
+    'mail',
+    'Postfach (Gmail)',
+    inbox.enabled
+      ? `Verbunden${inbox.account ? ` mit ${inbox.account}` : ''}. Versand-E-Mails werden nur gelesen, nie verändert.`
+      : 'Liest Versand-E-Mails (nur Lesezugriff) direkt im Browser und übernimmt Sendungsnummern automatisch.',
+    h(
+      'div',
+      { class: 'flex flex-wrap items-center justify-between gap-3' },
+      h('label', { class: 'text-sm text-muted', attrs: { for: 'autoscan' } }, 'Automatisch scannen'),
+      interval,
+    ),
+    h(
+      'ul',
+      { class: 'mt-4 space-y-1.5 border-t border-line pt-4 text-xs text-subtle' },
+      h('li', { class: 'flex gap-2' }, icon('shield', 'size-3.5 shrink-0 text-emerald-400'), 'Zugriffs-Token nur im Arbeitsspeicher (≈ 1 h), kein Server dazwischen.'),
+      h('li', { class: 'flex gap-2' }, icon('search', 'size-3.5 shrink-0'), 'Gelesen werden nur Mails von Paketdiensten & Shops bzw. mit Versand-Stichworten.'),
+      h('li', { class: 'flex gap-2' }, icon('lock', 'size-3.5 shrink-0'), 'Funde, Vorschläge & Scan-Verlauf werden verschlüsselt im Tresor gespeichert.'),
+    ),
+    h(
+      'div',
+      { class: 'mt-4 flex flex-wrap justify-end gap-2 border-t border-line pt-4' },
+      inbox.enabled ? resetBtn : null,
+      inbox.enabled ? disconnectBtn : null,
+      connectBtn,
+    ),
   );
 }
 
