@@ -148,6 +148,22 @@ html.light {
   .kbd {
     @apply rounded-md border border-line-strong bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-muted;
   }
+  /* Static boot screen from index.html (pure CSS, no JS needed) */
+  .boot {
+    @apply flex min-h-dvh flex-col items-center justify-center gap-4 px-6 text-center;
+  }
+  .boot-title {
+    @apply flex items-center gap-3 text-sm text-muted;
+  }
+  .boot-title::before {
+    content: '';
+    @apply size-4 animate-spin rounded-full border-2 border-line-strong border-t-accent;
+  }
+  /* Only shown if the bundle hasn't replaced the boot screen after a few seconds */
+  .boot-hint {
+    @apply max-w-md space-y-2 text-sm text-subtle opacity-0;
+    animation: fade-in 300ms ease-out 6s forwards;
+  }
   .toast-root {
     @apply pointer-events-none fixed inset-x-0 bottom-0 z-[100] flex flex-col items-center gap-2 p-4 sm:items-end sm:p-6;
   }

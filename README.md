@@ -117,9 +117,20 @@ Im GitHub-Workflow wird die Variable aus *Settings → Secrets and variables →
 Der Workflow [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) läuft bei jedem Push auf `main`:
 `npm ci → npm test → npm run build → upload-pages-artifact → deploy-pages`.
 
-Einmalig erforderlich: **Repository → Settings → Pages → Build and deployment → Source: „GitHub Actions“**.
+Einmalig erforderlich: **Repository → Settings → Pages → Build and deployment → Source: „GitHub Actions“**. Danach den Workflow einmal manuell starten (**Actions → Deploy to GitHub Pages → Run workflow**), denn das Umstellen selbst löst keinen Build aus.
 
 Da Vite mit `base: './'` baut, funktioniert die App ohne weitere Konfiguration unter `https://<user>.github.io/<repo>/`.
+
+### Fehlerbehebung: Seite bleibt grau oder leer
+
+| Symptom | Ursache | Lösung |
+| --- | --- | --- |
+| Graue Seite mit dem Hinweis „Die App konnte nicht gestartet werden“ | Pages liefert den **Quellcode** aus (Source „Deploy from a branch“); `/src/main.ts` kann der Browser nicht ausführen | Source auf **„GitHub Actions“** stellen und den Workflow erneut ausführen (siehe unten) |
+| Workflow schlägt bei `Configure GitHub Pages` fehl | Pages war beim Lauf noch nicht für Actions aktiviert | Source umstellen, dann **Actions → Deploy to GitHub Pages → Re-run all jobs** |
+| Nach dem Umstellen weiterhin alte Version | Das Umstellen der Source startet **keinen** neuen Build | Workflow manuell starten (**Run workflow**) oder neuen Commit auf `main` pushen |
+| Nach erfolgreichem Deploy immer noch grau | Browser- oder CDN-Cache | Hart neu laden (Strg+Shift+R) |
+
+Nach jedem Deployment prüft der Schritt **Verify live deployment**, ob die Live-URL wirklich den Vite-Build ausliefert, und schlägt sonst mit einem Hinweis fehl.
 
 ## Lizenz
 

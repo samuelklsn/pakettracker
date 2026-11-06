@@ -43,7 +43,16 @@ jobs:
           VITE_TRACKING_API_URL: ${{ vars.VITE_TRACKING_API_URL }}
 
       - name: Configure GitHub Pages
+        id: pages
         uses: actions/configure-pages@v5
+
+      - name: Explain Pages misconfiguration
+        if: failure() && steps.pages.outcome == 'failure'
+        run: |
+          msg="GitHub Pages ist nicht (oder nicht für GitHub Actions) aktiviert. Settings → Pages → Build and deployment → Source: „GitHub Actions“ wählen und diesen Workflow erneut ausführen."
+          echo "::error title=GitHub Pages nicht konfiguriert::$msg"
+          echo "### ❌ GitHub Pages nicht konfiguriert" >> "$GITHUB_STEP_SUMMARY"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
@@ -61,3 +70,25 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      # Guards against a blank page: verifies the live site serves the Vite build
+      # (hashed bundle) and not the raw repository source (/src/main.ts).
+      - name: Verify live deployment
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          for attempt in $(seq 1 18); do
+            html="$(curl -fsSL -H 'Cache-Control: no-cache' "${PAGE_URL}?v=${GITHUB_SHA}" || true)"
+            if grep -q 'src="./assets/index-' <<<"$html" && ! grep -q 'src/main.ts' <<<"$html"; then
+              echo "✅ ${PAGE_URL} liefert den Production-Build aus."
+              echo "### ✅ Live: ${PAGE_URL}" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "Versuch ${attempt}: Build noch nicht live – warte 10 s …"
+            sleep 10
+          done
+          msg="${PAGE_URL} liefert nicht den Vite-Build aus (evtl. Quelle „Deploy from a branch“). Settings → Pages → Source: „GitHub Actions“."
+          echo "::error title=Deployment-Prüfung fehlgeschlagen::$msg"
+          echo "### ❌ Deployment-Prüfung fehlgeschlagen" >> "$GITHUB_STEP_SUMMARY"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          exit 1

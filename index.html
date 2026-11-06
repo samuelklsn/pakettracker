@@ -11,7 +11,24 @@
     <title>Pakettracker · Zero-Knowledge Paketverfolgung</title>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <!--
+        Boot screen: replaced by the app as soon as the bundle runs.
+        If the bundle never loads (e.g. GitHub Pages serves the raw source instead of
+        the Vite build), the hint below stays visible instead of a blank page.
+      -->
+      <div class="boot" role="status">
+        <p class="boot-title">Pakettracker wird geladen …</p>
+        <div class="boot-hint">
+          <p>Die App konnte nicht gestartet werden.</p>
+          <p>
+            Falls du diese Seite auf GitHub Pages siehst, wird vermutlich der Quellcode statt des Builds ausgeliefert:
+            Stelle unter <strong>Settings → Pages → Source</strong> auf <strong>„GitHub Actions“</strong> um und
+            führe den Workflow <strong>„Deploy to GitHub Pages“</strong> erneut aus.
+          </p>
+        </div>
+      </div>
+    </div>
     <div id="toast-root" class="toast-root" role="region" aria-label="Benachrichtigungen"></div>
     <noscript>Pakettracker benötigt JavaScript, um deine Daten lokal zu ver- und entschlüsseln.</noscript>
     <script type="module" src="/src/main.ts"></script>
