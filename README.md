@@ -196,6 +196,7 @@ Da Vite mit `base: './'` baut, funktioniert die App ohne weitere Konfiguration u
 | --- | --- | --- |
 | Graue Seite mit dem Hinweis „Die App konnte nicht gestartet werden“ | Pages liefert den **Quellcode** aus (Source „Deploy from a branch“); `/src/main.ts` kann der Browser nicht ausführen | Source auf **„GitHub Actions“** stellen und den Workflow erneut ausführen (siehe unten) |
 | Workflow schlägt bei `Configure GitHub Pages` fehl | Pages war beim Lauf noch nicht für Actions aktiviert | Source umstellen, dann **Actions → Deploy to GitHub Pages → Re-run all jobs** |
+| Seite wird kurz nach einem Push wieder grau | Source steht noch auf „Deploy from a branch“: GitHubs Branch-Build überschreibt die App | Source auf **„GitHub Actions“** stellen. Bis dahin deployt der Workflow nach jedem Branch-Build automatisch erneut (`workflow_run`) |
 | Nach dem Umstellen weiterhin alte Version | Das Umstellen der Source startet **keinen** neuen Build | Workflow manuell starten (**Run workflow**) oder neuen Commit auf `main` pushen |
 | Nach erfolgreichem Deploy immer noch grau | Browser- oder CDN-Cache | Hart neu laden (Strg+Shift+R) |
 

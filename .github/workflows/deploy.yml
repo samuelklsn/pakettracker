@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # Safety net: if Pages is still set to "Deploy from a branch", GitHub's own branch build
+  # publishes the raw source (blank page). Re-deploy the real build right after it.
+  workflow_run:
+    workflows: ['pages build and deployment']
+    types: [completed]
 
 # Least-privilege token: read repo, write Pages, OIDC for the deploy action
 permissions:
@@ -19,8 +24,25 @@ concurrency:
 jobs:
   build:
     name: Build & Test
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     steps:
+      - name: Check Pages source (must be "GitHub Actions")
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          type="$(gh api "repos/${GITHUB_REPOSITORY}/pages" --jq .build_type 2>/dev/null || echo unknown)"
+          echo "Pages build_type: ${type}"
+          if [ "${type}" = "legacy" ]; then
+            if gh api -X PUT "repos/${GITHUB_REPOSITORY}/pages" -f build_type=workflow >/dev/null 2>&1; then
+              echo "::notice title=GitHub Pages umgestellt::Source wurde automatisch auf „GitHub Actions“ gestellt."
+            else
+              msg="GitHub Pages steht noch auf „Deploy from a branch“. GitHubs Branch-Build überschreibt sonst die App mit dem Quellcode (graue Seite). Bitte Settings → Pages → Source: „GitHub Actions“ wählen. Bis dahin deployt dieser Workflow nach jedem Branch-Build automatisch erneut."
+              echo "::warning title=Pages-Quelle falsch::${msg}"
+              { echo "### ⚠️ Pages-Quelle falsch"; echo "${msg}"; } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+
       - name: Checkout
         uses: actions/checkout@v5
 
