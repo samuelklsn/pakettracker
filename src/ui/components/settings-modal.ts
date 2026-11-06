@@ -315,11 +315,26 @@ function mailSection(ctx: SettingsContext, closeSettings: () => void): HTMLEleme
     await ctx.mail.disconnect();
     closeSettings();
   }));
-  const resetBtn = h('button', { class: 'btn-ghost', type: 'button', attrs: { title: 'Die letzten 30 Tage beim nächsten Scan erneut prüfen' } }, icon('refresh'), 'Scan-Verlauf zurücksetzen');
-  resetBtn.addEventListener('click', busy(resetBtn, async () => {
-    await ctx.mail.resetHistory();
-    notify.success('Scan-Verlauf zurückgesetzt', 'Beim nächsten Scan werden die letzten 30 Tage erneut geprüft.');
-  }));
+  const resetBtn = h(
+    'button',
+    { class: 'btn-ghost', type: 'button', attrs: { title: 'Die Mails der letzten 30 Tage erneut einlesen' } },
+    icon('refresh'),
+    'Neu einlesen',
+  );
+  resetBtn.addEventListener(
+    'click',
+    busy(resetBtn, async () => {
+      const ok = await confirmDialog({
+        title: 'Postfach neu einlesen?',
+        description:
+          'Die Mails der letzten 30 Tage werden erneut gelesen. Vorhandene Sendungen werden nicht verdoppelt, aber gelöschte Sendungen und verworfene Vorschläge können wieder auftauchen.',
+        confirmLabel: 'Neu einlesen',
+      });
+      if (!ok) return;
+      closeSettings();
+      await ctx.mail.resetHistory();
+    }),
+  );
 
   return section(
     'mail',

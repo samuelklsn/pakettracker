@@ -25,6 +25,11 @@ export interface MailSource {
 }
 
 export interface ScanResult {
+  /** shipping-related mails matching the search */
+  found: number;
+  /** of those, already analysed in an earlier scan */
+  skipped: number;
+  /** newly analysed mails */
   scanned: number;
   added: Shipment[];
   suggested: number;
@@ -62,7 +67,7 @@ export async function scanInbox(vault: VaultService, source: MailSource): Promis
   );
   mails.sort((a, b) => a.date.localeCompare(b.date)); // oldest first → newest status wins
 
-  const result: ScanResult = { scanned: mails.length, added: [], suggested: 0, updated: 0, failed };
+  const result: ScanResult = { found: ids.length, skipped: ids.length - fresh.length, scanned: mails.length, added: [], suggested: 0, updated: 0, failed };
   const now = new Date().toISOString();
 
   await vault.update((d) => {
@@ -190,6 +195,20 @@ function addMailEvent(shipment: Shipment, mail: MailMessage, status: TrackingEve
     origin: 'mail',
   });
   return true;
+}
+
+/**
+ * Forgets which mails were read (and which suggestions were rejected), so the next scan reads the
+ * last 30 days again. Shipments that already exist are not duplicated; deleted ones come back.
+ */
+export async function resetScanHistory(vault: VaultService): Promise<void> {
+  await vault.update((d) => {
+    d.inbox.processedIds = [];
+    d.inbox.dismissed = [];
+    d.inbox.suggestions = [];
+    d.inbox.lastScanAt = undefined;
+    d.inbox.extractVersion = undefined;
+  });
 }
 
 /** Turns a suggestion into a shipment. */

@@ -8,7 +8,7 @@ vi.mock('../src/services/crypto.service', async (orig) => ({
 
 const { StorageService } = await import('../src/services/storage.service');
 const { VaultService } = await import('../src/services/vault.service');
-const { scanInbox, acceptSuggestion, dismissSuggestion } = await import('../src/services/inbox.service');
+const { scanInbox, acceptSuggestion, dismissSuggestion, resetScanHistory } = await import('../src/services/inbox.service');
 const { deriveStatus } = await import('../src/services/tracking.service');
 
 class MemoryStorage {
@@ -103,6 +103,22 @@ describe('InboxService', () => {
     // same number in a new mail → not suggested again
     await scanInbox(vault, fakeSource([m('f', { text: `Sendungsnummer ${second!.trackingNumber}` })]));
     expect(vault.data.inbox.suggestions).toHaveLength(0);
+  });
+
+  it('reports already-processed mails and brings deleted parcels back after a reset', async () => {
+    const source = fakeSource([m('a', { subject: 'Versandt', text: 'Tracking 1Z999AA10123456784' })]);
+    await scanInbox(vault, source);
+    await vault.update((d) => (d.shipments = []));
+
+    // first scan after deleting: mail found, but already processed → nothing comes back
+    const before = await scanInbox(vault, { ...source, listMessageIds: async () => ['a'] });
+    expect(before).toMatchObject({ found: 1, skipped: 1, scanned: 0 });
+    expect(vault.data.shipments).toHaveLength(0);
+
+    await resetScanHistory(vault);
+    const after = await scanInbox(vault, source);
+    expect(after).toMatchObject({ found: 1, skipped: 0, scanned: 1 });
+    expect(vault.data.shipments.map((s) => s.trackingNumber)).toEqual(['1Z999AA10123456784']);
   });
 
   it('keeps inbox state encrypted across lock/unlock', async () => {

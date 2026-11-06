@@ -3,7 +3,7 @@ import { DriveService } from './services/drive.service';
 import type { RemoteVault } from './services/drive.service';
 import { GmailService } from './services/gmail.service';
 import { GoogleAuthError, GoogleAuthService, SCOPES } from './services/google-auth.service';
-import { acceptSuggestion, dismissSuggestion, scanInbox } from './services/inbox.service';
+import { acceptSuggestion, dismissSuggestion, resetScanHistory, scanInbox } from './services/inbox.service';
 import { SyncService, isSyncEnabled, setSyncEnabled } from './services/sync.service';
 import type { VaultService } from './services/vault.service';
 import { inboxPanel } from './ui/components/inbox-panel';
@@ -13,7 +13,7 @@ import { cx, h } from './ui/dom';
 import { formatRelative } from './ui/format';
 import { icon, type IconName } from './ui/icons';
 import { confirmDialog, openModal } from './ui/modal';
-import { notify } from './ui/toast';
+import { notify, toast } from './ui/toast';
 
 /**
  * CloudController – everything that talks to Google on behalf of the unlocked vault:
@@ -430,7 +430,20 @@ export class CloudController {
       if (r.suggested) parts.push(`${r.suggested} Vorschl${r.suggested === 1 ? 'ag' : 'äge'}`);
       if (r.updated) parts.push(`${r.updated} Status-Update${r.updated === 1 ? '' : 's'}`);
       if (parts.length) notify.success('Postfach gescannt', parts.join(' · '));
-      else if (!opts.silent) notify.info('Postfach gescannt', r.scanned ? `${r.scanned} Mails geprüft – keine neuen Sendungen.` : 'Keine neuen Versand-Mails.');
+      else if (!opts.silent) {
+        if (r.found === 0) {
+          notify.info('Keine Versand-Mails gefunden', 'Seit dem letzten Scan (bzw. in den letzten 30 Tagen) kam keine Mail von Paketdiensten oder Shops.');
+        } else if (r.scanned === 0) {
+          toast(
+            'info',
+            `${r.found} Versand-Mail${r.found === 1 ? '' : 's'} gefunden – alle schon verarbeitet`,
+            'Gelöschte Pakete werden absichtlich nicht erneut importiert. Zum Neu-Einlesen: Einstellungen → Postfach → „Neu einlesen“.',
+            9000,
+          );
+        } else {
+          notify.info('Postfach gescannt', `${r.scanned} Mail${r.scanned === 1 ? '' : 's'} geprüft – keine neuen Sendungsnummern.`);
+        }
+      }
       if (r.failed && !opts.silent) notify.warning(`${r.failed} Mail(s) konnten nicht geladen werden`, 'Sie werden beim nächsten Scan erneut versucht.');
     } catch (err) {
       if (!this.vault.isUnlocked) return;
@@ -453,11 +466,10 @@ export class CloudController {
         notify.info('Gmail getrennt', isSyncEnabled() ? 'Das Postfach wird nicht mehr gelesen.' : 'Der Zugriff wurde bei Google widerrufen.');
       },
       resetHistory: async () => {
-        await this.vault.update((d) => {
-          d.inbox.processedIds = [];
-          d.inbox.lastScanAt = undefined;
-        });
+        await resetScanHistory(this.vault);
         this.host.changed();
+        if (this.gmail.hasValidToken) await this.runScan();
+        else await this.connectGmail(); // the click is a user gesture → popup allowed
       },
     };
   }
