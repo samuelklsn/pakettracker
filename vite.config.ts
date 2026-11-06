@@ -13,11 +13,12 @@ function contentSecurityPolicy(trackingApiUrl?: string, googleClientId?: string)
   let styleSrc = "'self'";
   let frameSrc = "'none'";
   if (googleClientId) {
-    // Gmail integration: Google Identity Services (token popup) + Gmail REST API only
+    // Google features: Identity Services (token popup), Gmail REST API, Drive appDataFolder
     scriptSrc += ' https://accounts.google.com/gsi/client';
     styleSrc += ' https://accounts.google.com/gsi/style';
     frameSrc = 'https://accounts.google.com/gsi/';
-    connectSrc += ' https://accounts.google.com/gsi/ https://oauth2.googleapis.com/revoke https://gmail.googleapis.com';
+    // Gmail API + Drive API (encrypted sync in the app-private appDataFolder)
+    connectSrc += ' https://accounts.google.com/gsi/ https://oauth2.googleapis.com/revoke https://gmail.googleapis.com https://www.googleapis.com';
   }
   if (trackingApiUrl) {
     try {

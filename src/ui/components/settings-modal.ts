@@ -14,9 +14,20 @@ export interface MailSettings {
   resetHistory: () => Promise<void>;
 }
 
+export interface SyncSettings {
+  configured: boolean;
+  enabled: boolean;
+  account?: string;
+  status: string;
+  enable: () => Promise<void>;
+  syncNow: () => Promise<void>;
+  disable: (deleteRemote: boolean) => Promise<void>;
+}
+
 export interface SettingsContext {
   vault: VaultService;
   mail: MailSettings;
+  sync: SyncSettings;
   onDataChanged: () => void;
   onDestroyed: () => void;
 }
@@ -27,6 +38,7 @@ export function openSettings(ctx: SettingsContext): void {
       h(
         'div',
         { class: 'space-y-4' },
+        ctx.sync.configured ? syncSection(ctx, close) : null,
         backupSection(ctx),
         ctx.mail.configured ? mailSection(ctx, close) : null,
         securitySection(ctx),
@@ -190,6 +202,75 @@ function importFlow(ctx: SettingsContext, text: string, fileName: string): void 
         ),
       );
     },
+  );
+}
+
+/* ------------------------------- Sync ------------------------------- */
+
+function syncSection(ctx: SettingsContext, closeSettings: () => void): HTMLElement {
+  const s = ctx.sync;
+  const run = (btn: HTMLButtonElement, fn: () => Promise<void>, closeAfter = false) => async () => {
+    btn.disabled = true;
+    try {
+      await fn();
+      if (closeAfter) closeSettings();
+    } catch (err) {
+      notify.error('Aktion fehlgeschlagen', errorMessage(err));
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  if (!s.enabled) {
+    const enable = h('button', { class: 'btn-primary', type: 'button' }, icon('cloud'), 'Mit Google Drive synchronisieren');
+    enable.addEventListener('click', run(enable, s.enable, true));
+    return section(
+      'cloud',
+      'Geräte-Synchronisierung',
+      'Gleicher Stand auf allen Geräten. In Google Drive liegt nur der verschlüsselte Tresor – ohne Master-Passwort unlesbar.',
+      h(
+        'ul',
+        { class: 'mb-4 space-y-1.5 text-xs text-subtle' },
+        h('li', { class: 'flex gap-2' }, icon('lock', 'size-3.5 shrink-0 text-emerald-400'), 'Ende-zu-Ende verschlüsselt (AES-256-GCM) – Google sieht nur Ciphertext.'),
+        h('li', { class: 'flex gap-2' }, icon('shield', 'size-3.5 shrink-0'), 'Versteckter App-Ordner: kein Zugriff auf deine übrigen Drive-Dateien.'),
+        h('li', { class: 'flex gap-2' }, icon('refresh', 'size-3.5 shrink-0'), 'Änderungen werden geräteübergreifend zusammengeführt, nicht überschrieben.'),
+      ),
+      h('div', { class: 'flex justify-end' }, enable),
+    );
+  }
+
+  const now = h('button', { class: 'btn-secondary', type: 'button' }, icon('refresh'), 'Jetzt synchronisieren');
+  now.addEventListener('click', run(now, s.syncNow, true));
+  const off = h('button', { class: 'btn-ghost', type: 'button' }, 'Auf diesem Gerät beenden');
+  off.addEventListener('click', run(off, () => s.disable(false), true));
+  const wipe = h('button', { class: 'btn-ghost text-rose-400 hover:bg-rose-500/10 hover:text-rose-400', type: 'button' }, icon('trash'), 'Cloud-Kopie löschen');
+  wipe.addEventListener(
+    'click',
+    run(
+      wipe,
+      async () => {
+        const ok = await confirmDialog({
+          title: 'Cloud-Kopie löschen?',
+          description: 'Der verschlüsselte Tresor wird aus Google Drive entfernt. Die Daten auf diesem Gerät bleiben erhalten, andere Geräte synchronisieren nicht mehr.',
+          confirmLabel: 'Löschen',
+          danger: true,
+        });
+        if (ok) await s.disable(true);
+      },
+      true,
+    ),
+  );
+
+  return section(
+    'cloudCheck',
+    'Geräte-Synchronisierung',
+    `Aktiv${s.account ? ` · ${s.account}` : ''} · ${s.status}`,
+    h(
+      'p',
+      { class: 'mb-4 text-xs text-subtle' },
+      'Neues Gerät: Pakettracker öffnen → „Tresor aus Google Drive laden“ → mit Google anmelden → Master-Passwort eingeben.',
+    ),
+    h('div', { class: 'flex flex-wrap justify-end gap-2' }, wipe, off, now),
   );
 }
 

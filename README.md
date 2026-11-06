@@ -18,6 +18,7 @@ Kein Konto, kein Backend, keine Telemetrie.
 | 🧭 Tracking-View | Vertikale Timeline (nach Tagen gruppiert) + 4-Stufen-Fortschrittsanzeige, Deeplinks zum offiziellen Carrier-Tracking, manuelle Statuspflege als Fallback |
 | 💎 UX | Dark Mode (Zinc) als Default + Light Mode, Glassmorphism, Skeleton-Loader, Toasts, Empty-States, Tastatur-Shortcuts (`/`, `Strg+K`, `Strg+Shift+L`), Fokus-Trap in Dialogen, `prefers-reduced-motion` |
 | 📬 Gmail-Import | Liest Versand-Mails (nur `gmail.readonly`, direkt im Browser): Eindeutige Treffer werden automatisch eingefügt, unsichere als Vorschläge angezeigt, Folge-Mails („wird heute zugestellt“) ergänzen die Timeline |
+| 🔄 Geräte-Sync | Gleicher Stand auf allen Geräten über Google Drive (versteckter App-Ordner). In der Cloud liegt nur der verschlüsselte Tresor; Änderungen werden feldgenau zusammengeführt (inkl. Löschungen & Passwortwechsel) |
 | 💾 Backup | Export/Import der **verschlüsselten** JSON-Datei, Merge oder Replace, Re-Encryption mit dem aktuellen Schlüssel |
 | 🛡 Hardening | Strikte CSP, kein `innerHTML`, Auto-Lock bei Inaktivität, Rollback bei Schreibfehlern, Multi-Tab-Sync |
 
@@ -48,9 +49,13 @@ src/
 │   ├── detection.service.ts # Smart-Input: Regex-Regeln, Prüfziffern, URL-Parsing
 │   ├── carriers.ts          # Carrier-Metadaten & sichere Deeplinks
 │   ├── tracking.service.ts  # API-Layer: Provider-Pattern (Remote-Proxy | Lokal), Timeline
-│   ├── gmail.service.ts     # Gmail: OAuth-Token (GIS, nur RAM), REST, MIME-Parsing
+│   ├── google-auth.service.ts # Gemeinsamer Google-Login (GIS-Token nur im RAM, mehrere Scopes)
+│   ├── gmail.service.ts     # Gmail REST + MIME-Parsing
 │   ├── mail-extract.service.ts # Mail → Sendungsnummern (Kontext-Scoring, HTML→Text, Status)
 │   ├── inbox.service.ts     # Scan-Orchestrierung: Dedupe, Auto-Add, Vorschläge
+│   ├── drive.service.ts     # Google Drive appDataFolder: verschlüsselten Envelope laden/speichern
+│   ├── sync-merge.ts        # Reine, deterministische Merge-Funktion (Tombstones, Event-Union)
+│   ├── sync.service.ts      # Sync-Zyklus: download → entschlüsseln → mergen → speichern → upload
 │   └── autolock.service.ts  # Inaktivitäts-Timer
 ├── ui/                      # Präsentation – kennt Services nur über App-Controller
 │   ├── dom.ts               # XSS-sicherer Hyperscript-Builder (nur textContent)
@@ -59,6 +64,7 @@ src/
 │   └── components/          # lock-screen, smart-input, shipment-card, shipment-detail,
 │                            # timeline, skeleton, empty-state, settings-modal, inbox-panel, …
 ├── app.ts                   # Controller: verbindet Services & Views, State, Routing
+├── cloud-controller.ts      # Google-Features (Login, Gmail, Drive-Sync), Timer & Status-UI
 ├── main.ts                  # Bootstrap
 └── styles.css               # Tailwind v4 + semantische Design-Tokens (Dark/Light)
 ```
@@ -92,6 +98,31 @@ localStorage["pakettracker.vault.v1"] = { v, kdf:{iterations, salt}, cipher:{iv}
 - **Unverschlüsselt** gespeichert wird nur die Theme-Präferenz (`pakettracker.theme`).
 
 > ⚠️ Zero-Knowledge heißt: Ein vergessenes Master-Passwort kann **nicht** wiederhergestellt werden. Regelmäßig Backups exportieren!
+
+## Geräte-Synchronisierung (optional)
+
+Damit alle Geräte (PC, Handy, Tablet) denselben Stand haben, kann der Tresor über **Google Drive** synchronisiert werden.
+
+- **Zero-Knowledge bleibt erhalten:** In Drive liegt ausschließlich der verschlüsselte Envelope (`pakettracker-vault.json`), also derselbe Ciphertext wie im `localStorage`. Ohne Master-Passwort ist er unlesbar, auch für Google.
+- **App-privater Ordner:** Der Scope `drive.appdata` gibt nur Zugriff auf den versteckten App-Ordner, nicht auf deine übrigen Dateien.
+- **Zusammenführen statt Überschreiben:**
+  - Sendungen: die neuere Änderung gewinnt, Timeline-Einträge werden vereinigt.
+  - Löschungen werden per Tombstone übertragen.
+  - Dieselbe Sendungsnummer auf zwei Geräten wird zu einer Sendung zusammengelegt.
+  - Gmail-Verlauf und Vorschläge werden ebenfalls vereinigt.
+- **Wann synchronisiert wird:** nach dem Entsperren, kurz nach jeder Änderung, jede Minute, beim Zurückkehren zum Tab und vor dem Sperren.
+- **Passwort geändert:** Das andere Gerät fragt einmal nach dem neuen Passwort und führt dann zusammen.
+
+**Einrichtung:**
+1. Auf dem ersten Gerät: *Einstellungen → Geräte-Synchronisierung → Mit Google Drive synchronisieren*.
+2. Auf jedem weiteren Gerät: Pakettracker öffnen → **„Tresor aus Google Drive laden“** → mit Google anmelden → Master-Passwort eingeben.
+
+Google Cloud Console (zusätzlich zur Gmail-Einrichtung unten):
+- **Google Drive API** aktivieren.
+- Unter *Datenzugriff* den Scope `https://www.googleapis.com/auth/drive.appdata` hinzufügen.
+
+> Weil der Ciphertext jetzt auch in der Cloud liegt, schützt ihn **nur das Master-Passwort**. Ein langes Passwort
+> (z. B. 4–5 zufällige Wörter) macht Offline-Rateangriffe praktisch unmöglich.
 
 ## Gmail-Integration (optional)
 

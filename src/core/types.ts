@@ -84,11 +84,25 @@ export interface VaultSettings {
   autoLockMinutes: number;
 }
 
+/** Maximum number of deletion tombstones kept in a vault. */
+export const MAX_TOMBSTONES = 2000;
+
+/** Marks a deleted shipment so the deletion survives a sync merge. */
+export interface Tombstone {
+  id: string;
+  /** ISO timestamp of the deletion */
+  at: string;
+}
+
 export interface VaultData {
   schema: 1;
   shipments: Shipment[];
   settings: VaultSettings;
   inbox: InboxState;
+  /** Deleted shipment IDs (capped) – needed for multi-device sync */
+  deleted: Tombstone[];
+  /** Last modification of this data set (ISO) – decides settings conflicts when syncing */
+  updatedAt: string;
 }
 
 export const DEFAULT_SETTINGS: VaultSettings = { autoLockMinutes: 10 };
@@ -98,5 +112,12 @@ export function createDefaultInbox(): InboxState {
 }
 
 export function createEmptyVault(): VaultData {
-  return { schema: 1, shipments: [], settings: { ...DEFAULT_SETTINGS }, inbox: createDefaultInbox() };
+  return {
+    schema: 1,
+    shipments: [],
+    settings: { ...DEFAULT_SETTINGS },
+    inbox: createDefaultInbox(),
+    deleted: [],
+    updatedAt: new Date().toISOString(),
+  };
 }

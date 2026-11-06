@@ -11,6 +11,8 @@ export interface LockScreenOptions {
   onCreate: (password: string) => Promise<void>;
   onUnlock: (password: string) => Promise<void>;
   onReset: () => void;
+  /** Setup mode only: load an existing vault from the cloud (new device). */
+  onLoadFromCloud?: () => Promise<void>;
 }
 
 /** Client-side throttling after repeated failures (UX hardening against shoulder-surf guessing). */
@@ -104,6 +106,7 @@ export function lockScreen(opts: LockScreenOptions): HTMLElement {
       error,
       submit,
     ),
+    setup && opts.onLoadFromCloud ? cloudOption(opts.onLoadFromCloud) : null,
     h(
       'div',
       { class: 'mt-6 flex items-center justify-between gap-3 border-t border-line pt-5 text-xs text-subtle' },
@@ -130,6 +133,34 @@ export function lockScreen(opts: LockScreenOptions): HTMLElement {
         : h('span', null, 'Lokal · Offline-fähig'),
     ),
   );
+
+  function cloudOption(load: () => Promise<void>): HTMLElement {
+    const btn = h('button', { class: 'btn-secondary h-11 w-full', type: 'button' }, icon('cloudDownload'), 'Tresor aus Google Drive laden');
+    btn.addEventListener('click', async () => {
+      hideError();
+      btn.disabled = true;
+      btn.replaceChildren(icon('loader', 'size-4 animate-spin'), 'Lade verschlüsselten Tresor …');
+      try {
+        await load();
+      } catch (err) {
+        showError(errorMessage(err));
+        btn.disabled = false;
+        btn.replaceChildren(icon('cloudDownload'), 'Tresor aus Google Drive laden');
+      }
+    });
+    return h(
+      'div',
+      { class: 'mt-5 space-y-3' },
+      h(
+        'div',
+        { class: 'flex items-center gap-3 text-xs text-subtle' },
+        h('span', { class: 'h-px flex-1 bg-line' }),
+        'Schon auf einem anderen Gerät eingerichtet?',
+        h('span', { class: 'h-px flex-1 bg-line' }),
+      ),
+      btn,
+    );
+  }
 
   function setBusy(busy: boolean) {
     submit.disabled = busy;
@@ -162,6 +193,6 @@ export function lockScreen(opts: LockScreenOptions): HTMLElement {
       h('span', { class: 'text-base font-semibold tracking-tight' }, 'Pakettracker'),
     ),
     card,
-    h('p', { class: 'mt-6 max-w-md text-center text-xs text-subtle' }, 'Deine Daten verlassen niemals unverschlüsselt dieses Gerät. Kein Konto, kein Server, kein Tracking.'),
+    h('p', { class: 'mt-6 max-w-md text-center text-xs text-subtle' }, 'Deine Daten verlassen dieses Gerät nur verschlüsselt – auch bei der Synchronisierung. Kein Konto bei uns, kein Tracking.'),
   );
 }

@@ -1,16 +1,14 @@
+import { CloudController } from './cloud-controller';
 import { errorMessage } from './core/errors';
 import { uid } from './core/id';
 import type { CarrierId, Shipment, ShipmentStatus } from './core/types';
 import { AutoLockService } from './services/autolock.service';
 import { CARRIERS } from './services/carriers';
-import { GmailAuthError, GmailService } from './services/gmail.service';
-import { acceptSuggestion, dismissSuggestion, scanInbox } from './services/inbox.service';
 import type { DetectionResult } from './services/detection.service';
 import { StorageService } from './services/storage.service';
 import { TrackingService, type TrackingResult, deriveStatus } from './services/tracking.service';
 import { VaultService } from './services/vault.service';
 import { emptyState } from './ui/components/empty-state';
-import { inboxPanel } from './ui/components/inbox-panel';
 import { lockScreen } from './ui/components/lock-screen';
 import { openSettings } from './ui/components/settings-modal';
 import { shipmentCard } from './ui/components/shipment-card';
@@ -49,13 +47,11 @@ const INITIAL_SKELETON_MS = 380;
  */
 export class App {
   private readonly storage = new StorageService();
-  private readonly vault = new VaultService(this.storage);
+  readonly vault = new VaultService(this.storage);
   private readonly tracking = new TrackingService();
-  private readonly autoLock = new AutoLockService(() => this.lock('Automatisch gesperrt nach Inaktivität'));
+  private readonly autoLock = new AutoLockService(() => void this.lock('Automatisch gesperrt nach Inaktivität'));
   private readonly listeners = new Set<() => void>();
-  private readonly gmail = new GmailService();
-  private scanning = false;
-  private scanTimer: ReturnType<typeof setInterval> | undefined;
+  private readonly cloud = new CloudController(this);
 
   private filter: Filter = 'active';
   private query = '';
@@ -104,6 +100,13 @@ export class App {
             notify.info('Tresor gelöscht', 'Du kannst jetzt einen neuen Tresor anlegen.');
             this.render();
           },
+          onLoadFromCloud: this.cloud.configured
+            ? async () => {
+                await this.cloud.loadFromCloud();
+                this.render();
+                notify.success('Tresor geladen', 'Gib jetzt dein Master-Passwort ein.');
+              }
+            : undefined,
         }),
       );
       return;
@@ -119,24 +122,28 @@ export class App {
     this.query = '';
     this.queryEmail = null;
     this.render();
-    if (this.gmail.configured && this.vault.data.inbox.enabled) {
-      // The unlock click still counts as a user gesture → the Google popup is usually allowed.
-      // If it gets blocked, the inbox panel simply offers a "connect" button.
-      void this.connectGmail({ auto: true });
-    }
-    this.startScanTimer();
+    // The unlock click still counts as a user gesture → a Google popup (if needed) is usually allowed.
+    this.cloud.onUnlocked();
   }
 
-  /** Clears everything session-bound: auto-lock, scan timer, Gmail token, open dialogs. */
+  /** Clears everything session-bound: auto-lock, Google token & timers, open dialogs. */
   private endSession(): void {
     this.autoLock.stop();
-    this.stopScanTimer();
-    this.gmail.forgetToken();
+    this.cloud.endSession();
     this.listeners.clear();
     closeAllModals();
   }
 
-  private lock(reason?: string): void {
+  private locking = false;
+
+  private async lock(reason?: string): Promise<void> {
+    if (!this.vault.isUnlocked || this.locking) return;
+    this.locking = true;
+    try {
+      await this.cloud.beforeLock(); // push pending changes to the other devices first
+    } finally {
+      this.locking = false;
+    }
     if (!this.vault.isUnlocked) return;
     this.vault.lock();
     this.endSession();
@@ -169,7 +176,7 @@ export class App {
     }
     if (e.key.toLowerCase() === 'l' && (e.metaKey || e.ctrlKey) && e.shiftKey) {
       e.preventDefault();
-      this.lock();
+      void this.lock();
     }
   }
 
@@ -180,8 +187,8 @@ export class App {
     return () => this.listeners.delete(fn);
   };
 
-  private changed(): void {
-    this.renderInbox();
+  changed(): void {
+    this.cloud.renderInbox();
     this.renderStats();
     this.renderTabs();
     this.renderList();
@@ -324,113 +331,6 @@ export class App {
     );
   }
 
-  /* --------------------------------- Mailbox --------------------------------- */
-
-  /** Requests a Gmail token (needs a user gesture), enables the integration and scans. */
-  private async connectGmail(opts: { auto?: boolean } = {}): Promise<void> {
-    try {
-      await this.gmail.connect(this.vault.data.inbox.account);
-      if (!this.vault.isUnlocked) return;
-      if (!this.vault.data.inbox.enabled || !this.vault.data.inbox.account) {
-        const account = await this.gmail.profileEmail();
-        await this.vault.update((d) => {
-          d.inbox.enabled = true;
-          d.inbox.account = account || d.inbox.account;
-        });
-        notify.success('Gmail verbunden', account || undefined);
-      }
-      this.changed();
-      await this.runScan({ silent: !!opts.auto });
-    } catch (err) {
-      if (this.vault.isUnlocked) this.renderInbox();
-      if (!opts.auto) notify.error('Gmail-Verbindung fehlgeschlagen', errorMessage(err));
-    }
-  }
-
-  private async runScan(opts: { silent?: boolean } = {}): Promise<void> {
-    if (this.scanning || !this.vault.isUnlocked) return;
-    if (!this.gmail.hasValidToken) {
-      this.renderInbox();
-      return;
-    }
-    this.scanning = true;
-    this.renderInbox();
-    try {
-      const r = await scanInbox(this.vault, this.gmail);
-      if (!this.vault.isUnlocked) return;
-      const parts: string[] = [];
-      if (r.added.length) parts.push(`${r.added.length} neu hinzugefügt`);
-      if (r.suggested) parts.push(`${r.suggested} Vorschl${r.suggested === 1 ? 'ag' : 'äge'}`);
-      if (r.updated) parts.push(`${r.updated} Status-Update${r.updated === 1 ? '' : 's'}`);
-      if (parts.length) notify.success('Postfach gescannt', parts.join(' · '));
-      else if (!opts.silent) notify.info('Postfach gescannt', r.scanned ? `${r.scanned} Mails geprüft – keine neuen Sendungen.` : 'Keine neuen Versand-Mails.');
-      if (r.failed && !opts.silent) notify.warning(`${r.failed} Mail(s) konnten nicht geladen werden`, 'Sie werden beim nächsten Scan erneut versucht.');
-    } catch (err) {
-      if (!this.vault.isUnlocked) return;
-      if (!opts.silent || !(err instanceof GmailAuthError)) notify.error('Postfach-Scan fehlgeschlagen', errorMessage(err));
-    } finally {
-      this.scanning = false;
-      if (this.vault.isUnlocked) this.changed();
-    }
-  }
-
-  private startScanTimer(): void {
-    this.stopScanTimer();
-    if (!this.gmail.configured) return;
-    this.scanTimer = setInterval(() => {
-      if (!this.vault.isUnlocked) return;
-      const inbox = this.vault.data.inbox;
-      if (!inbox.enabled || !inbox.autoScanMinutes) return;
-      if (!this.gmail.hasValidToken) {
-        this.renderInbox(); // shows "connection expired"
-        return;
-      }
-      const last = inbox.lastScanAt ? Date.parse(inbox.lastScanAt) : 0;
-      if (Date.now() - last >= inbox.autoScanMinutes * 60_000) void this.runScan({ silent: true });
-    }, 60_000);
-  }
-
-  private stopScanTimer(): void {
-    clearInterval(this.scanTimer);
-    this.scanTimer = undefined;
-  }
-
-  private renderInbox(): void {
-    if (!this.inboxHost || !this.vault.isUnlocked) return;
-    if (!this.gmail.configured) {
-      this.inboxHost.replaceChildren();
-      return;
-    }
-    const guard = (fn: () => Promise<void>) => () =>
-      void fn().catch((err) => notify.error('Aktion fehlgeschlagen', errorMessage(err)));
-    this.inboxHost.replaceChildren(
-      inboxPanel({
-        inbox: this.vault.data.inbox,
-        tokenValid: this.gmail.hasValidToken,
-        scanning: this.scanning,
-        onConnect: () => void this.connectGmail(),
-        onScan: () => void this.runScan(),
-        onAccept: (id) =>
-          guard(async () => {
-            const s = await acceptSuggestion(this.vault, id);
-            this.changed();
-            if (s) notify.success('Sendung übernommen', s.label);
-          })(),
-        onDismiss: (id) =>
-          guard(async () => {
-            await dismissSuggestion(this.vault, id);
-            this.changed();
-          })(),
-        onAcceptAll: guard(async () => {
-          const ids = this.vault.data.inbox.suggestions.map((s) => s.id);
-          for (const id of ids) await acceptSuggestion(this.vault, id);
-          this.changed();
-          notify.success('Vorschläge übernommen', `${ids.length} Sendungen hinzugefügt`);
-        }),
-      }),
-    );
-  }
-
   /* --------------------------------- Views --------------------------------- */
 
   private dashboard(): HTMLElement {
@@ -447,6 +347,7 @@ export class App {
     this.vaultPill = h('span', { class: 'chip hidden border-emerald-400/20 bg-emerald-400/5 text-emerald-400 sm:inline-flex' });
     this.statsHost = h('div', { class: 'grid grid-cols-2 gap-3 lg:grid-cols-4' });
     this.inboxHost = h('div');
+    this.cloud.mountInbox(this.inboxHost);
     this.tabsHost = h('div', { class: 'flex gap-1 overflow-x-auto rounded-xl border border-line bg-surface p-1', attrs: { role: 'tablist' } });
     this.listHost = h('div', { attrs: { role: 'tabpanel' } });
 
@@ -477,6 +378,7 @@ export class App {
             h('span', { class: 'text-[15px] font-semibold tracking-tight' }, 'Pakettracker'),
           ),
           this.vaultPill,
+          this.cloud.syncPill(),
           h(
             'div',
             { class: 'ml-auto flex items-center gap-1' },
@@ -490,23 +392,8 @@ export class App {
                 onClick: () =>
                   openSettings({
                     vault: this.vault,
-                    mail: {
-                      configured: this.gmail.configured,
-                      connect: () => this.connectGmail(),
-                      disconnect: async () => {
-                        await this.gmail.disconnect();
-                        await this.vault.update((d) => (d.inbox.enabled = false));
-                        this.changed();
-                        notify.info('Gmail getrennt', 'Der Zugriff wurde bei Google widerrufen.');
-                      },
-                      resetHistory: async () => {
-                        await this.vault.update((d) => {
-                          d.inbox.processedIds = [];
-                          d.inbox.lastScanAt = undefined;
-                        });
-                        this.changed();
-                      },
-                    },
+                    mail: this.cloud.mailSettings(),
+                    sync: this.cloud.syncSettings(),
                     onDataChanged: () => {
                       this.autoLock.start(this.vault.data.settings.autoLockMinutes);
                       this.changed();
@@ -521,7 +408,7 @@ export class App {
             ),
             h(
               'button',
-              { class: 'btn-secondary ml-1 h-9 rounded-lg px-3', type: 'button', attrs: { title: 'Sperren (Strg+Shift+L)' }, onClick: () => this.lock() },
+              { class: 'btn-secondary ml-1 h-9 rounded-lg px-3', type: 'button', attrs: { title: 'Sperren (Strg+Shift+L)' }, onClick: () => void this.lock() },
               icon('lock', 'size-4'),
               h('span', { class: 'hidden sm:inline' }, 'Sperren'),
             ),
@@ -562,7 +449,6 @@ export class App {
     this.renderStats();
     this.renderTabs();
     this.updateVaultPill();
-    this.renderInbox();
     return view;
   }
 

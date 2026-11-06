@@ -1,5 +1,5 @@
 import {
-  ArrowLeft, Box, CalendarClock, ChevronRight, CircleCheck, CircleDot, CircleExclamationPoint, CircleX, Clipboard,
+  ArrowLeft, Box, Cloud, CloudCheck, CloudDownload, CloudExclamationPoint, CloudOff, CalendarClock, ChevronRight, CircleCheck, CircleDot, CircleExclamationPoint, CircleX, Clipboard,
   Copy, Download, ExternalLink, Eye, EyeOff, Hash, House, Inbox, Info, KeyRound, Link, LoaderCircle, Lock, LockOpen,
   Mail, MapPin, Moon, Package, PackageCheck, PackageOpen, Pencil, Plus, RefreshCw, Search, Settings, ShieldCheck,
   ShieldExclamationPoint, Sparkles, StickyNote, Sun, Timer, Trash, TriangleExclamationPoint, Truck, Upload, X,
@@ -8,7 +8,8 @@ import {
 
 /** Tree-shaken icon registry – only the icons listed here end up in the bundle. */
 export const icons = {
-  arrowLeft: ArrowLeft, box: Box, calendar: CalendarClock, chevronRight: ChevronRight, check: CircleCheck,
+  arrowLeft: ArrowLeft, box: Box, cloud: Cloud, cloudCheck: CloudCheck, cloudDownload: CloudDownload,
+  cloudAlert: CloudExclamationPoint, cloudOff: CloudOff, calendar: CalendarClock, chevronRight: ChevronRight, check: CircleCheck,
   dot: CircleDot, alert: CircleExclamationPoint, error: CircleX, clipboard: Clipboard, copy: Copy, download: Download,
   external: ExternalLink, eye: Eye, eyeOff: EyeOff, hash: Hash, house: House, inbox: Inbox, info: Info, key: KeyRound,
   link: Link, loader: LoaderCircle, lock: Lock, unlock: LockOpen, mail: Mail, pin: MapPin, moon: Moon, package: Package,

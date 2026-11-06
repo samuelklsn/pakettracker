@@ -5,9 +5,11 @@ import {
   type MailSuggestion,
   type Shipment,
   type ShipmentStatus,
+  type Tombstone,
   type TrackingEvent,
   type VaultData,
   DEFAULT_SETTINGS,
+  MAX_TOMBSTONES,
   createDefaultInbox,
   createEmptyVault,
 } from '../core/types';
@@ -35,6 +37,8 @@ interface Session {
   key: CryptoKey;
   kdf: KdfParams;
   data: VaultData;
+  /** Keys replaced by a password change in this session (salt → key), so the old cloud copy can still be merged */
+  previousKeys?: Map<string, CryptoKey>;
 }
 
 export type ImportMode = 'merge' | 'replace';
@@ -48,6 +52,7 @@ export class WrongPasswordError extends DecryptionError {
 export class VaultService {
   private session: Session | null = null;
   private writeQueue: Promise<void> = Promise.resolve();
+  private readonly persistListeners = new Set<() => void>();
 
   private readonly storage: StorageService;
 
@@ -66,6 +71,73 @@ export class VaultService {
 
   hasVault(): boolean {
     return this.storage.hasVault();
+  }
+
+  /** Called after every user-initiated save (not for sync-internal writes). */
+  onPersisted(fn: () => void): () => void {
+    this.persistListeners.add(fn);
+    return () => this.persistListeners.delete(fn);
+  }
+
+  /** The currently stored (encrypted) envelope. */
+  envelope(): VaultEnvelope | null {
+    return this.storage.load();
+  }
+
+  /** Installs an envelope from another device on a device that has no vault yet. */
+  installEnvelope(envelope: VaultEnvelope): void {
+    if (this.storage.hasVault()) throw new InvalidVaultFormatError('Auf diesem Gerät existiert bereits ein Tresor');
+    this.storage.save(envelope);
+  }
+
+  /**
+   * Tries to decrypt a foreign envelope (e.g. from the cloud) with the current session key.
+   * Returns null if it was encrypted with a different password/salt.
+   */
+  async openWithSessionKey(envelope: VaultEnvelope): Promise<{ data: VaultData; currentKey: boolean } | null> {
+    const s = this.session;
+    if (!s) return null;
+    const current = envelope.kdf.salt === s.kdf.salt && envelope.kdf.iterations === s.kdf.iterations;
+    const key = current ? s.key : s.previousKeys?.get(envelope.kdf.salt);
+    if (!key) return null;
+    try {
+      const data = sanitizeVaultData(await decryptJson<unknown>(key, cipherOf(envelope), envelopeAad(envelope)));
+      return { data, currentKey: current };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Merges remote data into the session atomically (no await between read and write, so a
+   * concurrent local edit can't be lost) and saves the result without firing persist listeners.
+   * Returns true if the local data changed.
+   */
+  async mergeIn(remote: VaultData, merge: (local: VaultData, remote: VaultData) => VaultData, same: (a: VaultData, b: VaultData) => boolean): Promise<boolean> {
+    if (!this.session) throw new Error('Tresor ist gesperrt');
+    const merged = sanitizeVaultData(merge(this.session.data, remote));
+    if (same(merged, this.session.data)) return false;
+    this.session.data = merged;
+    await this.persist({ silent: true });
+    return true;
+  }
+
+  /**
+   * Opens a foreign envelope with ITS password, merges it into the local data and switches this
+   * device to that envelope's key (used when the password was changed on another device).
+   */
+  async adoptEnvelope(envelope: VaultEnvelope, password: string, merge: (local: VaultData, remote: VaultData) => VaultData): Promise<void> {
+    if (!this.session) throw new Error('Tresor ist gesperrt');
+    const { key, data } = await openEnvelope(envelope, password);
+    const merged = merge(this.session.data, data);
+    const old = this.session;
+    this.session = { key, kdf: envelope.kdf, data: sanitizeVaultData(merged) };
+    try {
+      await this.persist({ silent: true });
+    } catch (err) {
+      this.session = old;
+      throw err;
+    }
   }
 
   async create(password: string): Promise<void> {
@@ -113,7 +185,14 @@ export class VaultService {
   async update(mutator: (draft: VaultData) => void): Promise<void> {
     if (!this.session) throw new Error('Tresor ist gesperrt');
     const draft = structuredClone(this.session.data);
+    const before = new Set(draft.shipments.map((s) => s.id));
     mutator(draft);
+    // Record deletions as tombstones so they propagate to other devices.
+    const after = new Set(draft.shipments.map((s) => s.id));
+    const now = new Date().toISOString();
+    const removed = [...before].filter((id) => !after.has(id)).map((id) => ({ id, at: now }));
+    if (removed.length) draft.deleted = [...removed, ...draft.deleted];
+    draft.updatedAt = now;
     const previous = this.session.data;
     this.session.data = sanitizeVaultData(draft);
     try {
@@ -145,7 +224,9 @@ export class VaultService {
     const kdf = newKdfParams();
     const key = await deriveKey(next, fromBase64(kdf.salt), kdf.iterations);
     const old = this.session;
-    this.session = { key, kdf, data: old.data };
+    const previousKeys = new Map(old.previousKeys);
+    previousKeys.set(old.kdf.salt, old.key);
+    this.session = { key, kdf, data: old.data, previousKeys };
     try {
       await this.persist();
     } catch (err) {
@@ -197,7 +278,7 @@ export class VaultService {
     this.storage.destroy();
   }
 
-  private async persist(): Promise<void> {
+  private async persist(opts: { silent?: boolean } = {}): Promise<void> {
     // serialise writes so rapid edits can't interleave
     const run = this.writeQueue.then(async () => {
       const session = this.session;
@@ -215,6 +296,12 @@ export class VaultService {
       await decryptJson(session.key, cipherOf(envelope), aad);
       this.storage.save(envelope);
     });
+    if (!opts.silent) {
+      void run.then(
+        () => this.persistListeners.forEach((fn) => fn()),
+        () => undefined,
+      );
+    }
     this.writeQueue = run.catch(() => undefined);
     return run;
   }
@@ -375,5 +462,13 @@ export function sanitizeVaultData(raw: unknown): VaultData {
         Number.isFinite(autoLock) && autoLock >= 0 && autoLock <= 240 ? Math.round(autoLock) : DEFAULT_SETTINGS.autoLockMinutes,
     },
     inbox: sanitizeInbox(d.inbox),
+    deleted: Array.isArray(d.deleted)
+      ? d.deleted
+          .filter((t): t is Tombstone => typeof t === 'object' && t !== null && typeof (t as Tombstone).id === 'string' && (t as Tombstone).id.length <= 64)
+          .map((t) => ({ id: t.id, at: iso(t.at) }))
+          .slice(0, MAX_TOMBSTONES)
+      : [],
+    // missing timestamp (older vault format) → epoch, so it never wins a settings conflict
+    updatedAt: typeof d.updatedAt === 'string' && !Number.isNaN(Date.parse(d.updatedAt)) ? d.updatedAt : new Date(0).toISOString(),
   };
 }
