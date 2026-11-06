@@ -44,8 +44,24 @@ export interface Shipment {
   archived: boolean;
   /** How the shipment was created */
   source?: 'manual' | 'gmail';
+  /** Shop / sender, e.g. "Amazon.de" */
+  shop?: string;
+  /** Ordered items extracted from the mail */
+  items?: string[];
+  orderNumber?: string;
+  /** Reference to the notification mail (opens it in Gmail) */
+  mail?: { messageId: string; subject?: string; account?: string };
+  /** true while the label was generated automatically (may be improved by later scans) */
+  labelAuto?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Order details extracted from a notification mail. */
+export interface OrderInfo {
+  shop?: string;
+  items: string[];
+  orderNumber?: string;
 }
 
 /** A tracking number found in an e-mail that needs user confirmation. */
@@ -61,6 +77,9 @@ export interface MailSuggestion {
   sourceUrl?: string;
   messageId: string;
   receivedAt: string;
+  shop?: string;
+  items?: string[];
+  orderNumber?: string;
 }
 
 /** Mailbox integration state – stored encrypted inside the vault. */
@@ -77,6 +96,8 @@ export interface InboxState {
   /** Tracking numbers the user rejected – never suggested again */
   dismissed: string[];
   suggestions: MailSuggestion[];
+  /** Version of the extraction logic used for processedIds (a bump triggers a one-time re-scan) */
+  extractVersion?: number;
 }
 
 export interface VaultSettings {

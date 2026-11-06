@@ -103,6 +103,7 @@ function suggestionList(p: InboxPanelProps, list: MailSuggestion[]): HTMLElement
             h(
               'p',
               { class: 'flex flex-wrap items-center gap-x-2 text-xs text-subtle' },
+              s.shop ? h('span', { class: 'font-medium text-muted' }, s.shop) : null,
               h('span', { class: 'font-mono text-muted' }, groupTrackingNumber(s.trackingNumber)),
               h('span', null, `${CARRIERS[s.carrier].name} · ${Math.round(s.confidence * 100)}%`),
               h('span', { class: 'hidden truncate sm:inline', attrs: { title: s.reason } }, `· ${formatRelative(s.receivedAt)}`),

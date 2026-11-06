@@ -1,4 +1,4 @@
-import type { CarrierId, ShipmentStatus } from '../core/types';
+import type { CarrierId, OrderInfo, ShipmentStatus } from '../core/types';
 import { CARRIERS, carrierForHost } from './carriers';
 import { type CarrierCandidate, detect, matchCarriers, normalizeTrackingNumber } from './detection.service';
 
@@ -156,6 +156,120 @@ function scoreCandidate(
 
   const auto = (distinctive && (keyword || senderMatch || best.reason.includes('gültig'))) || (senderMatch && keyword);
   return { carrier: best.carrier, confidence, reason: reasons.join(' · '), auto };
+}
+
+/* ------------------------------ Order details ------------------------------ */
+
+/** Bump when the extraction gets better → existing shipments are enriched by a one-time re-scan. */
+export const EXTRACT_VERSION = 2;
+
+const SHOP_NOISE =
+  /\b(kundenservice|kundendienst|customer service|service|team|versand|versandabteilung|shipping|bestellung(en)?|order(s)?|benachrichtigung(en)?|notifications?|newsletter|no-?reply|info|mailer|shop-?team)\b/gi;
+
+function cleanShop(name: string): string | undefined {
+  const cleaned = name
+    .replace(/["'„“]/g, '')
+    .replace(/\s+(via|über)\s+.*$/i, '')
+    .replace(SHOP_NOISE, '')
+    .replace(/[|•·:–-]+\s*$/, '')
+    .replace(/^\s*[|•·:–-]+/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned.length >= 2 && cleaned.length <= 40 && /[a-zA-ZäöüÄÖÜ]/.test(cleaned) ? cleaned : undefined;
+}
+
+function shopFromDomain(address: string | undefined): string | undefined {
+  const domain = address?.split('@')[1];
+  if (!domain) return undefined;
+  const parts = domain.toLowerCase().split('.');
+  // mail.shop.de → shop; amazon.de → amazon
+  const base = parts.length >= 2 ? parts[parts.length - 2]! : parts[0]!;
+  if (!base || /^(gmail|googlemail|web|gmx|outlook|hotmail|yahoo|t-online|icloud|mail)$/.test(base)) return undefined;
+  return base.charAt(0).toUpperCase() + base.slice(1);
+}
+
+const SHOP_IN_TEXT =
+  /(?:[Pp]aket|[Ss]endung|[Ll]ieferung|[Bb]estellung|[Pp]äckchen)\s+(?:von|vom [Aa]bsender)\s+([A-ZÄÖÜ0-9][\wÄÖÜäöüß&.'+-]*(?:\s+[A-ZÄÖÜ0-9][\wÄÖÜäöüß&.'+-]*){0,3})/;
+const SENDER_LABEL = /^(?:absender|versender|händler|haendler|shop|verkäufer|verkaeufer)\s*:\s*(.{2,60})$/im;
+
+function extractShop(mail: MailMessage): string | undefined {
+  const fromCarrier = senderCarrier(mail.from);
+  const text = `${mail.subject}\n${mail.text}`;
+  if (fromCarrier) {
+    // Carrier notification: the shop is mentioned in the text ("Ihr Paket von Zalando …")
+    const m = SHOP_IN_TEXT.exec(text) ?? SENDER_LABEL.exec(mail.text);
+    const shop = m?.[1] ? cleanShop(m[1].replace(/\s+(ist|wird|wurde|kommt|an|in|am|für)\b.*$/i, '')) : undefined;
+    return shop && !carrierForHost(`${shop.toLowerCase()}.de`) ? shop : undefined;
+  }
+  const display = /^\s*"?([^"<]+?)"?\s*</.exec(mail.from)?.[1];
+  return (display ? cleanShop(display) : undefined) ?? shopFromDomain(senderAddress(mail.from));
+}
+
+const ITEM_BLOCKLIST =
+  /(summe|gesamt|zwischensumme|versand|lieferkosten|lieferung|mwst|ust\.?|steuer|rabatt|gutschein|total|subtotal|tax|shipping|zahlung|payment|rechnung|adresse|anschrift|sendungsnummer|tracking|bestellnummer|bestelldatum|kundennummer|datum|uhr|http|www\.|@|impressum|datenschutz|abmelden|newsletter|hallo|liebe|vielen dank|danke|grüße|gruesse|mfg|telefon|straße|strasse|verfolgen|status)/i;
+const PRICE = /(?:\d{1,5}[.,]\d{2}\s?(?:€|eur)|(?:€|eur)\s?\d{1,5}[.,]\d{2})/i;
+
+function cleanItem(s: string): string | undefined {
+  const item = s
+    .replace(/\b(?:menge|anzahl|stück|stückzahl|qty|quantity)\s*:?\s*\d+\b/gi, '')
+    .replace(/\s[x×]\s?\d{1,2}\b/gi, '')
+    .replace(PRICE, '')
+    .replace(/^[-•*·▪︎\s]+/, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/[\s,;:–-]+$/, '')
+    .trim();
+  if (item.length < 3 || item.length > 140) return undefined;
+  if (!/[a-zA-ZäöüÄÖÜ]{3}/.test(item) || ITEM_BLOCKLIST.test(item)) return undefined;
+  if (/^\d[\d\s.,]*$/.test(item)) return undefined;
+  return item;
+}
+
+function extractItems(text: string): string[] {
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 600);
+  const found: string[] = [];
+  const add = (s: string | undefined) => {
+    const item = s ? cleanItem(s) : undefined;
+    if (item && !found.some((f) => f.toLowerCase() === item.toLowerCase())) found.push(item);
+  };
+  lines.forEach((line, i) => {
+    let m: RegExpExecArray | null;
+    if ((m = /^(\d{1,2})\s*[x×]\s+(.+)$/i.exec(line))) add(m[2]);
+    else if ((m = /^(.+?)\s+[x×]\s*\d{1,2}$/i.exec(line))) add(m[1]);
+    else if ((m = /^(?:artikel|artikelname|produkt|produktname|item|bezeichnung)\s*:\s*(.+)$/i.exec(line))) add(m[1]);
+    else if (/^(?:menge|anzahl|stück|stückzahl|qty|quantity)\s*:?\s*\d+/i.test(line)) add(lines[i - 1]);
+    else if (new RegExp(`^${PRICE.source}$`, 'i').test(line)) add(lines[i - 1]);
+    else if ((m = new RegExp(`^(.{3,120}?)\\s+${PRICE.source}$`, 'i').exec(line))) add(m[1]);
+  });
+  return found.slice(0, 5);
+}
+
+const ORDER_RE =
+  /(?:bestell(?:ung)?s?[-\s]?(?:nummer|nr\.?)|auftrags(?:nummer|nr\.?)|order\s?(?:number|no\.?|#|id)|bestellung)\s*:?\s*#?\s*([A-Z0-9][A-Z0-9-]{3,30}\d)/i;
+
+export function extractOrderInfo(mail: MailMessage): OrderInfo {
+  const order = ORDER_RE.exec(`${mail.subject}\n${mail.text}`)?.[1];
+  return {
+    shop: extractShop(mail),
+    items: extractItems(mail.text),
+    orderNumber: order && /\d{3,}/.test(order) ? order : undefined,
+  };
+}
+
+/** Human-friendly label: item name > "Bestellung bei Shop" > cleaned subject. */
+export function shipmentLabel(info: OrderInfo, subject: string, carrier: CarrierId): string {
+  const first = info.items[0];
+  if (first) {
+    const short = first.length > 60 ? `${first.slice(0, 59)}…` : first;
+    return info.items.length > 1 ? `${short} (+${info.items.length - 1})` : short;
+  }
+  if (info.shop) return `Bestellung bei ${info.shop}`;
+  return labelFromSubject(subject, carrier);
+}
+
+/** Deep link that opens the original notification in Gmail. */
+export function gmailLink(messageId: string, account?: string): string {
+  const user = account ? `?authuser=${encodeURIComponent(account)}` : '';
+  return `https://mail.google.com/mail/${user}#all/${encodeURIComponent(messageId)}`;
 }
 
 /**

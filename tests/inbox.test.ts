@@ -57,7 +57,8 @@ describe('InboxService', () => {
     expect(r1).toMatchObject({ scanned: 3, suggested: 1, failed: 0 });
     expect(r1.added.map((s) => s.trackingNumber)).toEqual(['1Z999AA10123456784']);
     const added = vault.data.shipments[0]!;
-    expect(added).toMatchObject({ source: 'gmail', label: 'Ihre Bestellung wurde versandt', email: 'info@shop.example' });
+    expect(added).toMatchObject({ source: 'gmail', label: 'Bestellung bei Shop', shop: 'Shop', email: 'info@shop.example', labelAuto: true });
+    expect(added.mail?.messageId).toBe('a');
     expect(deriveStatus(added)).toBe('in_transit');
     expect(vault.data.inbox.suggestions).toHaveLength(1);
     expect(vault.data.inbox.processedIds.sort()).toEqual(['a', 'b', 'c']);

@@ -1,12 +1,15 @@
 import { uid } from '../core/id';
 import type { MailSuggestion, Shipment, TrackingEvent } from '../core/types';
 import {
+  EXTRACT_VERSION,
   type MailMessage,
   buildGmailQuery,
   extractFromMail,
+  extractOrderInfo,
   inferStatus,
   labelFromSubject,
   senderAddress,
+  shipmentLabel,
 } from './mail-extract.service';
 import { STATUS_META } from './tracking.service';
 import type { VaultService } from './vault.service';
@@ -35,9 +38,11 @@ const OVERLAP_SECONDS = 2 * 86_400;
 
 export async function scanInbox(vault: VaultService, source: MailSource): Promise<ScanResult> {
   const inbox = vault.data.inbox;
-  const since = inbox.lastScanAt ? Date.parse(inbox.lastScanAt) / 1000 - OVERLAP_SECONDS : undefined;
+  // Better extraction logic → re-read the last 30 days once to enrich existing shipments (no duplicates).
+  const upgrade = inbox.extractVersion !== EXTRACT_VERSION;
+  const since = inbox.lastScanAt && !upgrade ? Date.parse(inbox.lastScanAt) / 1000 - OVERLAP_SECONDS : undefined;
   const ids = await source.listMessageIds(buildGmailQuery(since), MAX_MESSAGES_PER_SCAN);
-  const processed = new Set(inbox.processedIds);
+  const processed = new Set(upgrade ? [] : inbox.processedIds);
   const fresh = ids.filter((id) => !processed.has(id));
 
   // fetch with limited concurrency; individual failures don't abort the scan
@@ -67,11 +72,15 @@ export async function scanInbox(vault: VaultService, source: MailSource): Promis
 
     for (const mail of mails) {
       const status = inferStatus(mail.subject);
-      for (const hit of extractFromMail(mail)) {
+      const hits = extractFromMail(mail);
+      const info = hits.length ? extractOrderInfo(mail) : { items: [] };
+      for (const hit of hits) {
         const existing = byNumber.get(hit.trackingNumber);
         if (existing) {
-          // Known shipment → enrich its timeline with the status from this mail
-          if (status && addMailEvent(existing, mail, status)) {
+          // Known shipment → add the status from this mail and fill in missing order details
+          const evented = !!status && addMailEvent(existing, mail, status);
+          const enriched = enrich(existing, info, mail, d.inbox.account);
+          if (evented || enriched) {
             existing.updatedAt = now;
             result.updated++;
           }
@@ -84,10 +93,15 @@ export async function scanInbox(vault: VaultService, source: MailSource): Promis
             id: uid(),
             trackingNumber: hit.trackingNumber,
             carrier: hit.carrier,
-            label: labelFromSubject(mail.subject, hit.carrier),
+            label: shipmentLabel(info, mail.subject, hit.carrier),
+            labelAuto: true,
             email: senderAddress(mail.from),
             sourceUrl: hit.sourceUrl,
             notes: `Automatisch aus Gmail übernommen (${hit.reason}).`,
+            shop: info.shop,
+            items: info.items.length ? info.items : undefined,
+            orderNumber: info.orderNumber,
+            mail: { messageId: mail.id, subject: mail.subject.slice(0, 200), account: d.inbox.account },
             events: [],
             archived: false,
             source: 'gmail',
@@ -105,11 +119,14 @@ export async function scanInbox(vault: VaultService, source: MailSource): Promis
             carrier: hit.carrier,
             confidence: hit.confidence,
             reason: hit.reason,
-            label: labelFromSubject(mail.subject, hit.carrier),
+            label: shipmentLabel(info, mail.subject, hit.carrier),
             email: senderAddress(mail.from),
             sourceUrl: hit.sourceUrl,
             messageId: mail.id,
             receivedAt: mail.date,
+            shop: info.shop,
+            items: info.items.length ? info.items : undefined,
+            orderNumber: info.orderNumber,
           };
           d.inbox.suggestions.unshift(suggestion);
           suggested.add(hit.trackingNumber);
@@ -122,9 +139,43 @@ export async function scanInbox(vault: VaultService, source: MailSource): Promis
     const done = mails.map((m) => m.id);
     d.inbox.processedIds = [...done, ...d.inbox.processedIds.filter((id) => !done.includes(id))];
     d.inbox.lastScanAt = failed === 0 ? now : (d.inbox.lastScanAt ?? undefined);
+    d.inbox.extractVersion = EXTRACT_VERSION;
   });
 
   return result;
+}
+
+/**
+ * Fills in missing order details of an existing shipment. Replaces the label only if it was
+ * generated automatically (never overwrites a name the user chose). Returns true if changed.
+ */
+function enrich(s: Shipment, info: ReturnType<typeof extractOrderInfo>, mail: MailMessage, account?: string): boolean {
+  let changed = false;
+  if (!s.shop && info.shop) {
+    s.shop = info.shop;
+    changed = true;
+  }
+  if (!s.items?.length && info.items.length) {
+    s.items = info.items;
+    changed = true;
+  }
+  if (!s.orderNumber && info.orderNumber) {
+    s.orderNumber = info.orderNumber;
+    changed = true;
+  }
+  if (!s.mail) {
+    s.mail = { messageId: mail.id, subject: mail.subject.slice(0, 200), account };
+    changed = true;
+  }
+  // older versions used the plain subject as label → treat that as auto-generated too
+  const auto = s.labelAuto || (s.source === 'gmail' && s.label === labelFromSubject(mail.subject, s.carrier));
+  const better = shipmentLabel({ shop: s.shop, items: s.items ?? [], orderNumber: s.orderNumber }, mail.subject, s.carrier);
+  if (auto && better !== s.label && (s.items?.length || s.shop)) {
+    s.label = better;
+    s.labelAuto = true;
+    changed = true;
+  }
+  return changed;
 }
 
 function addMailEvent(shipment: Shipment, mail: MailMessage, status: TrackingEvent['status']): boolean {
@@ -156,6 +207,11 @@ export async function acceptSuggestion(vault: VaultService, suggestionId: string
       trackingNumber: s.trackingNumber,
       carrier: s.carrier,
       label: s.label,
+      labelAuto: true,
+      shop: s.shop,
+      items: s.items,
+      orderNumber: s.orderNumber,
+      mail: { messageId: s.messageId, account: d.inbox.account },
       email: s.email,
       sourceUrl: s.sourceUrl,
       notes: `Aus Gmail übernommen (${s.reason}).`,

@@ -9,6 +9,7 @@ export interface ShipmentFormValues {
   trackingNumber: string;
   carrier: CarrierId;
   label: string;
+  shop?: string;
   email?: string;
   sourceUrl?: string;
   notes?: string;
@@ -46,6 +47,12 @@ export function shipmentForm(
         name: 'label',
         value: initial.label ?? '',
         attrs: { placeholder: 'z. B. Neue Kopfhörer', maxlength: 120, autofocus: !!initial.trackingNumber },
+      });
+      const shop = h('input', {
+        class: 'field',
+        name: 'shop',
+        value: initial.shop ?? '',
+        attrs: { placeholder: 'z. B. Amazon, Zalando', maxlength: 80, autocomplete: 'off' },
       });
       const email = h('input', {
         class: 'field',
@@ -87,6 +94,7 @@ export function shipmentForm(
                 trackingNumber: n,
                 carrier: carrier.value as CarrierId,
                 label: label.value.trim() || n,
+                shop: shop.value.trim() || undefined,
                 email: mail || undefined,
                 sourceUrl: initial.sourceUrl,
                 notes: notes.value.trim() || undefined,
@@ -105,7 +113,12 @@ export function shipmentForm(
           h('label', null, h('span', { class: 'label' }, 'Sendungsnummer'), number),
           h('label', null, h('span', { class: 'label' }, 'Carrier'), carrier),
         ),
-        h('label', { class: 'block' }, h('span', { class: 'label' }, 'Bezeichnung'), label),
+        h(
+          'div',
+          { class: 'grid gap-4 sm:grid-cols-2' },
+          h('label', { class: 'block' }, h('span', { class: 'label' }, 'Bezeichnung (Was ist drin?)'), label),
+          h('label', { class: 'block' }, h('span', { class: 'label' }, 'Shop (optional)'), shop),
+        ),
         h('label', { class: 'block' }, h('span', { class: 'label' }, 'E-Mail (optional)'), email),
         h('label', { class: 'block' }, h('span', { class: 'label' }, 'Notizen (optional)'), notes),
         initial.sourceUrl
@@ -135,6 +148,7 @@ export function formValuesFrom(s: Shipment): ShipmentFormValues {
     trackingNumber: s.trackingNumber,
     carrier: s.carrier,
     label: s.label,
+    shop: s.shop,
     email: s.email,
     sourceUrl: s.sourceUrl,
     notes: s.notes,

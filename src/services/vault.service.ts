@@ -366,6 +366,20 @@ function sanitizeEvent(raw: unknown): TrackingEvent | null {
   };
 }
 
+function sanitizeItems(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const items = v.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map((x) => x.slice(0, 160)).slice(0, 20);
+  return items.length ? items : undefined;
+}
+
+function sanitizeMailRef(v: unknown): Shipment['mail'] {
+  if (typeof v !== 'object' || v === null) return undefined;
+  const m = v as Record<string, unknown>;
+  const messageId = typeof m.messageId === 'string' && /^[0-9a-zA-Z_-]{1,64}$/.test(m.messageId) ? m.messageId : undefined;
+  if (!messageId) return undefined;
+  return { messageId, subject: str(m.subject, 200), account: str(m.account, 254) };
+}
+
 function sanitizeShipment(raw: unknown): Shipment | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const s = raw as Record<string, unknown>;
@@ -394,6 +408,11 @@ function sanitizeShipment(raw: unknown): Shipment | null {
     remote,
     archived: s.archived === true,
     source: s.source === 'gmail' ? 'gmail' : s.source === 'manual' ? 'manual' : undefined,
+    shop: str(s.shop, 80),
+    items: sanitizeItems(s.items),
+    orderNumber: str(s.orderNumber, 40),
+    mail: sanitizeMailRef(s.mail),
+    labelAuto: s.labelAuto === true ? true : undefined,
     createdAt: iso(s.createdAt),
     updatedAt: iso(s.updatedAt),
   };
@@ -421,6 +440,9 @@ function sanitizeSuggestion(raw: unknown): MailSuggestion | null {
     sourceUrl: str(s.sourceUrl, 2048),
     messageId,
     receivedAt: iso(s.receivedAt),
+    shop: str(s.shop, 80),
+    items: sanitizeItems(s.items),
+    orderNumber: str(s.orderNumber, 40),
   };
 }
 
@@ -443,6 +465,7 @@ export function sanitizeInbox(raw: unknown): InboxState {
     suggestions: Array.isArray(i.suggestions)
       ? i.suggestions.map(sanitizeSuggestion).filter((s): s is MailSuggestion => !!s).slice(0, MAX_SUGGESTIONS)
       : [],
+    extractVersion: Number.isInteger(i.extractVersion) ? (i.extractVersion as number) : undefined,
   };
 }
 

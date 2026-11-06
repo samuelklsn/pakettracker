@@ -1,6 +1,7 @@
 import { uid } from '../../core/id';
 import type { Shipment, ShipmentStatus } from '../../core/types';
 import { CARRIERS, deeplinkFor } from '../../services/carriers';
+import { gmailLink } from '../../services/mail-extract.service';
 import { STATUS_META, type TrackingResult } from '../../services/tracking.service';
 import { cx, h } from '../dom';
 import { formatDateTime, formatRelative, groupTrackingNumber, toLocalInputValue } from '../format';
@@ -102,6 +103,9 @@ export function openShipmentDetail(ctx: DetailContext, id: string): void {
               ),
             ),
           ),
+
+          // ---------- What was ordered ----------
+          orderSection(s),
 
           // ---------- Status hero ----------
           h('div', { class: 'glass space-y-4 rounded-2xl p-4', dataset: { statusHero: '' } }, statusHeroPlaceholder()),
@@ -319,6 +323,53 @@ export function openShipmentDetail(ctx: DetailContext, id: string): void {
       unsubscribe = ctx.subscribe(() => render());
       render();
     },
+  );
+}
+
+/** What was ordered – shop, items, order number and a link to the original mail. */
+function orderSection(s: Shipment): HTMLElement | null {
+  if (!s.shop && !s.items?.length && !s.orderNumber && !s.mail) return null;
+  return h(
+    'section',
+    { class: 'glass rounded-2xl p-4' },
+    h(
+      'div',
+      { class: 'flex items-start justify-between gap-3' },
+      h(
+        'div',
+        { class: 'min-w-0' },
+        h('p', { class: 'text-xs font-medium tracking-wide text-subtle uppercase' }, 'Bestellung'),
+        h('p', { class: 'mt-1 truncate text-base font-semibold text-fg' }, s.shop ?? 'Unbekannter Shop'),
+        s.orderNumber ? h('p', { class: 'mt-0.5 font-mono text-xs text-muted' }, `Bestellnr. ${s.orderNumber}`) : null,
+      ),
+      s.mail
+        ? h(
+            'a',
+            {
+              class: 'btn-secondary h-9 shrink-0 rounded-lg px-3',
+              href: gmailLink(s.mail.messageId, s.mail.account),
+              target: '_blank',
+              rel: 'noopener noreferrer',
+              attrs: { title: s.mail.subject ?? 'Original-E-Mail öffnen' },
+            },
+            icon('mail'),
+            'E-Mail öffnen',
+          )
+        : null,
+    ),
+    s.items?.length
+      ? h(
+          'ul',
+          { class: 'mt-3 space-y-1.5 border-t border-line pt-3' },
+          ...s.items.map((item) => h('li', { class: 'flex gap-2 text-sm text-fg' }, h('span', { class: 'mt-1.5 size-1.5 shrink-0 rounded-full bg-accent' }), h('span', null, item))),
+        )
+      : s.mail
+        ? h(
+            'p',
+            { class: 'mt-3 border-t border-line pt-3 text-xs text-subtle' },
+            'Keine Artikel in der E-Mail erkannt – öffne die E-Mail oder gib der Sendung über „Bearbeiten“ einen Namen.',
+          )
+        : null,
   );
 }
 

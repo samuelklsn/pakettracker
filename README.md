@@ -135,9 +135,10 @@ Die App kann dein Gmail-Postfach **nur lesend** nach Versand-Mails durchsuchen u
 4. **Bewertung:** Jeder Fund wird nach Kontext bewertet: Carrier-Link, Absender-Domain, Stichworte, Prüfziffern. Bestell-, Kunden- und Telefonnummern werden ignoriert.
    - **Sicher** (z. B. UPS `1Z…` mit gültiger Prüfziffer, DHL `JJD…`/`00340…`, Carrier-Links): wird automatisch eingefügt.
    - **Unsicher:** erscheint als Vorschlag zum Übernehmen oder Verwerfen. Verworfene Nummern kommen nie wieder.
-5. **Bekannte Sendungen:** Mails zu bereits vorhandenen Sendungen (z. B. „wird heute zugestellt“) ergänzen deren Timeline.
-6. **Speicherung:** Funde, Vorschläge und der Scan-Verlauf liegen verschlüsselt im Tresor.
-7. **Auto-Scan:** läuft im eingestellten Intervall, solange die App geöffnet ist. Nach dem Entsperren verbindet sich die App automatisch neu. Läuft das Token ab, reicht ein Klick auf „Verbinden & scannen“, da Browser Popups nur nach einem Klick erlauben.
+5. **Was ist drin?** Aus der Mail werden **Shop, Artikel und Bestellnummer** gelesen. Die Sendung heißt dann z. B. „Sony Kopfhörer (+1)“ statt „Ihre Sendung ist unterwegs“, und „E-Mail öffnen“ springt direkt zur Original-Mail in Gmail. Selbst vergebene Namen werden nie überschrieben.
+6. **Bekannte Sendungen:** Mails zu bereits vorhandenen Sendungen (z. B. „wird heute zugestellt“) ergänzen deren Timeline.
+7. **Speicherung:** Funde, Vorschläge und der Scan-Verlauf liegen verschlüsselt im Tresor.
+8. **Auto-Scan:** läuft im eingestellten Intervall, solange die App geöffnet ist. Nach dem Entsperren verbindet sich die App automatisch neu. Läuft das Token ab, reicht ein Klick auf „Verbinden & scannen“, da Browser Popups nur nach einem Klick erlauben.
 
 > Das Google-Skript (`accounts.google.com/gsi/client`) wird erst geladen, wenn du die Funktion nutzt. Die CSP erlaubt
 > ausschließlich die nötigen Google-Endpunkte und nur, wenn eine Client-ID konfiguriert ist.

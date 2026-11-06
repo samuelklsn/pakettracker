@@ -320,7 +320,10 @@ export class App {
         deleteShipment: (x) => this.mutate((list) => list.splice(list.findIndex((s) => s.id === x), 1)),
         editShipment: (s) =>
           shipmentForm(formValuesFrom(s), 'edit', async (v) => {
-            await this.updateShipment(s.id, (x) => Object.assign(x, v));
+            await this.updateShipment(s.id, (x) => {
+              if (v.label !== x.label) x.labelAuto = false; // never overwrite a name the user chose
+              Object.assign(x, v);
+            });
             notify.success('Änderungen gespeichert');
           }),
         track: (s, force) => this.track(s, force),

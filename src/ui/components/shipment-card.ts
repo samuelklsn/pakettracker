@@ -32,7 +32,18 @@ export function shipmentCard(s: Shipment, onOpen: (s: Shipment) => void): HTMLEl
         'div',
         { class: 'min-w-0 flex-1' },
         h('p', { class: 'truncate text-sm font-semibold text-fg' }, s.label),
-        h('p', { class: 'mt-0.5 truncate font-mono text-xs text-muted' }, groupTrackingNumber(s.trackingNumber)),
+        (s.shop && !s.label.includes(s.shop)) || (s.items?.length ?? 0) > 1
+          ? h(
+              'p',
+              { class: 'mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted' },
+              s.shop && !s.label.includes(s.shop)
+                ? h('span', { class: 'inline-flex min-w-0 items-center gap-1 font-medium text-fg/80' }, icon('box', 'size-3 shrink-0'), h('span', { class: 'truncate' }, s.shop))
+                : null,
+              s.shop && !s.label.includes(s.shop) && (s.items?.length ?? 0) > 1 ? h('span', { class: 'text-subtle' }, '·') : null,
+              (s.items?.length ?? 0) > 1 ? h('span', { class: 'shrink-0' }, `${s.items!.length} Artikel`) : null,
+            )
+          : null,
+        h('p', { class: 'mt-0.5 truncate font-mono text-xs text-subtle' }, groupTrackingNumber(s.trackingNumber)),
       ),
       statusBadge(status, status === 'out_for_delivery'),
     ),
