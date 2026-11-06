@@ -4,17 +4,13 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-  # Safety net: if Pages is still set to "Deploy from a branch", GitHub's own branch build
-  # publishes the raw source (blank page). Re-deploy the real build right after it.
-  workflow_run:
-    workflows: ['pages build and deployment']
-    types: [completed]
 
 # Least-privilege token: read repo, write Pages, OIDC for the deploy action
 permissions:
   contents: read
   pages: write
   id-token: write
+  actions: read # to wait for GitHub's legacy branch build (see deploy job)
 
 # Only one deployment at a time; don't cancel a running production deploy
 concurrency:
@@ -24,7 +20,6 @@ concurrency:
 jobs:
   build:
     name: Build & Test
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     steps:
       - name: Check Pages source (must be "GitHub Actions")
@@ -37,7 +32,7 @@ jobs:
             if gh api -X PUT "repos/${GITHUB_REPOSITORY}/pages" -f build_type=workflow >/dev/null 2>&1; then
               echo "::notice title=GitHub Pages umgestellt::Source wurde automatisch auf „GitHub Actions“ gestellt."
             else
-              msg="GitHub Pages steht noch auf „Deploy from a branch“. GitHubs Branch-Build überschreibt sonst die App mit dem Quellcode (graue Seite). Bitte Settings → Pages → Source: „GitHub Actions“ wählen. Bis dahin deployt dieser Workflow nach jedem Branch-Build automatisch erneut."
+              msg="GitHub Pages steht noch auf „Deploy from a branch“. GitHubs Branch-Build würde die App mit dem Quellcode überschreiben (graue Seite). Bitte Settings → Pages → Source: „GitHub Actions“ wählen. Bis dahin wartet dieser Workflow den Branch-Build ab und deployt danach."
               echo "::warning title=Pages-Quelle falsch::${msg}"
               { echo "### ⚠️ Pages-Quelle falsch"; echo "${msg}"; } >> "$GITHUB_STEP_SUMMARY"
             fi
@@ -89,6 +84,21 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # If Pages is still on "Deploy from a branch", GitHub runs its own build for the same commit
+      # and would overwrite our deployment a few seconds later. Let it finish first, then deploy.
+      - name: Wait for GitHub's branch build (legacy Pages source)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in $(seq 1 36); do
+            pending="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${GITHUB_SHA}&per_page=30" \
+              --jq '[.workflow_runs[] | select(.name == "pages build and deployment" and .status != "completed")] | length' || echo 0)"
+            if [ "${pending}" = "0" ]; then echo "Kein laufender Branch-Build – deploye."; exit 0; fi
+            echo "GitHubs Branch-Build läuft noch – warte 10 s (${attempt}/36) …"
+            sleep 10
+          done
+          echo "::warning::Branch-Build nach 6 Minuten nicht fertig – deploye trotzdem."
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
@@ -102,9 +112,16 @@ jobs:
           for attempt in $(seq 1 18); do
             html="$(curl -fsSL -H 'Cache-Control: no-cache' "${PAGE_URL}?v=${GITHUB_SHA}" || true)"
             if grep -q 'src="./assets/index-' <<<"$html" && ! grep -q 'src/main.ts' <<<"$html"; then
-              echo "✅ ${PAGE_URL} liefert den Production-Build aus."
-              echo "### ✅ Live: ${PAGE_URL}" >> "$GITHUB_STEP_SUMMARY"
-              exit 0
+              # re-check after a pause: catches a later overwrite by another Pages deployment
+              sleep 30
+              again="$(curl -fsSL -H 'Cache-Control: no-cache' "${PAGE_URL}?v=${GITHUB_SHA}-2" || true)"
+              if grep -q 'src="./assets/index-' <<<"$again" && ! grep -q 'src/main.ts' <<<"$again"; then
+                echo "✅ ${PAGE_URL} liefert den Production-Build aus (stabil)."
+                echo "### ✅ Live: ${PAGE_URL}" >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+              echo "::error title=Deployment überschrieben::Die App wurde kurz nach dem Deploy durch den Quellcode ersetzt (Pages-Quelle „Deploy from a branch“)."
+              exit 1
             fi
             echo "Versuch ${attempt}: Build noch nicht live – warte 10 s …"
             sleep 10
